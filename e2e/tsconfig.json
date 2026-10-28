@@ -1,0 +1,6 @@
+{
+  "//": "Lets Playwright resolve the app's @/ imports. Type-checking uses ../tsconfig.e2e.json.",
+  "compilerOptions": {
+    "paths": { "@/*": ["../src/*"] }
+  }
+}

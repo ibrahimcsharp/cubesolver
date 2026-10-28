@@ -9,6 +9,7 @@ import {
   RefreshCw,
   RotateCcw,
   RotateCw,
+  Video,
 } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
@@ -21,18 +22,16 @@ import { buttonVariants } from '@/components/ui/button-variants'
 import {
   FACES,
   IDENTITY_ORIENTATION,
-  validateColors,
   viewFacelets,
   type Face,
   type Orientation,
   type StickerColor,
-  type ValidCube,
 } from '@/modules/cube'
 import { solve } from '@/modules/solve'
 import type { Solution, SolveStyle, Stage, Step, StepGroup } from '@/modules/solution'
 import { cn } from '@/lib/utils'
-import { useCubeStore } from '@/store/cubeStore'
 import { SPEEDS, useSettingsStore, type Speed } from '@/store/settingsStore'
+import { useValidCube } from '@/store/useValidCube'
 
 // three.js is large, so the 3D cube is only downloaded when it is shown.
 const CubePlayer3D = lazy(() => import('@/components/cube3d/CubePlayer3D'))
@@ -78,17 +77,6 @@ function flatten(solution: Solution): FlatStep[] {
   return out
 }
 
-/** Uses the checked cube, or re-checks the saved stickers after a page reload. */
-function useValidCube(): ValidCube | null {
-  const { cube, stickers } = useCubeStore()
-  return useMemo(() => {
-    if (cube) return cube
-    if (stickers.some((s) => s === null)) return null
-    const r = validateColors(stickers as StickerColor[])
-    return r.ok ? r : null
-  }, [cube, stickers])
-}
-
 export function SolutionPage() {
   const cube = useValidCube()
   const solveStyle = useSettingsStore((s) => s.solveStyle)
@@ -126,7 +114,13 @@ export function SolutionPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">Your solution</h1>
-        <StyleToggle value={solveStyle} onChange={setSolveStyle} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to="/live" className={buttonVariants({ variant: 'outline' })}>
+            <Video className="size-4" aria-hidden />
+            Live guide (webcam)
+          </Link>
+          <StyleToggle value={solveStyle} onChange={setSolveStyle} />
+        </div>
       </div>
 
       {result && 'error' in result && (

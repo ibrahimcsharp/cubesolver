@@ -2,6 +2,7 @@ import { createBrowserRouter, type RouteObject } from 'react-router'
 import { ErrorPage } from '@/app/ErrorPage'
 import { Layout } from '@/app/Layout'
 import { HomePage } from '@/pages/HomePage'
+import { LivePage } from '@/pages/LivePage'
 import { ManualPage } from '@/pages/ManualPage'
 import { NotationPage } from '@/pages/NotationPage'
 import { CheckPage } from '@/pages/CheckPage'
@@ -22,6 +23,7 @@ export const routes: RouteObject[] = [
       { path: '/check', element: <CheckPage /> },
       { path: '/solution', element: <SolutionPage /> },
       { path: '/notation', element: <NotationPage /> },
+      { path: '/live', element: <LivePage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

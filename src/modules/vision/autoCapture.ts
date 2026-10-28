@@ -87,7 +87,7 @@ export function centerMatches(
  * colors. Each channel is trusted in proportion to how much of that sticker's
  * light it carries; the rest falls back to plain brightness.
  */
-function learnedGains(centers: readonly { color: StickerColor; seen: RGB }[]): RGB {
+export function learnedGains(centers: readonly { color: StickerColor; seen: RGB }[]): RGB {
   if (centers.length === 0) return [1, 1, 1]
   const logs = [0, 1, 2].map((ch) => {
     let sum = 0
