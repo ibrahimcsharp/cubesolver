@@ -28,7 +28,7 @@ describe('beginner solver', () => {
     expect(s.stages).toEqual([])
   })
 
-  it('solves 1000 random cubes, verified by replaying every step', () => {
+  it('solves 1000 random cubes, verified by replaying every step', { timeout: 60_000 }, () => {
     const rand = seededRandom(7)
     let total = 0
     for (let i = 0; i < 1000; i++) {

@@ -16,7 +16,8 @@ test('enter a cube by hand and step through its solution', async ({ page }) => {
   await page.getByRole('button', { name: 'Next' }).click()
   await expect(page.getByText(/^Move 1 of \d+$/)).toBeVisible()
 
-  // Switch to the short solution and finish it.
+  // Switch to the short solution and finish it (flat map: no animations to wait for).
+  await page.getByRole('radio', { name: 'Flat map' }).click()
   await page.getByRole('radio', { name: /optimal/i }).click()
   await expect(page.getByText(/^\d+ moves\./)).toBeVisible()
   const next = page.getByRole('button', { name: 'Next' })

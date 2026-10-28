@@ -56,6 +56,8 @@ export type FaceImageOptions = {
   rand: () => number
   /** Per-cube sticker color offset (different plastic / camera). */
   cubeShift?: Partial<Record<StickerColor, RGB>>
+  /** Fixed color offset per sticker (keep the same across video frames). Random if left out. */
+  stickerShift?: readonly RGB[]
 }
 
 const clamp = (v: number) => Math.max(0, Math.min(255, v))
@@ -68,7 +70,7 @@ export function makeFaceImage(o: FaceImageOptions): Pixels {
   const cell = box.size / 3
   const gapW = cell * 0.08
   const border = cell * 0.08
-  const stickerShift = o.colors.map(() => [noise(10), noise(10), noise(10)])
+  const stickerShift = o.stickerShift ?? o.colors.map(() => [noise(10), noise(10), noise(10)])
   const glareCell = Math.floor(rand() * 9)
   const glareR = cell * 0.18
 

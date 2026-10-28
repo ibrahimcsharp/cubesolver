@@ -1,10 +1,18 @@
-import { ImagePlus, RotateCw, Trash2, Upload } from 'lucide-react'
+import { Film, ImagePlus, RotateCw, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { capitalize, STICKER_FILL } from '@/components/cube/colors'
 import { Button } from '@/components/ui/button'
+import { readVideoFrames, VideoError } from '@/modules/camera/videoFrames'
 import { SCAN_ORDER } from '@/modules/cube'
-import { centeredBox, findFaceBox, nearestNominal, sampleFace, type Box } from '@/modules/vision'
+import {
+  AutoCapture,
+  centeredBox,
+  findFaceBox,
+  nearestNominal,
+  sampleFace,
+  type Box,
+} from '@/modules/vision'
 import { cn } from '@/lib/utils'
 import { useScanStore } from '@/store/scanStore'
 
@@ -32,6 +40,49 @@ function withBox(pixels: ImageData, canvas: HTMLCanvasElement): Photo {
     box: found?.box ?? centeredBox(pixels.width, pixels.height, 0.6),
     autoFound: !!found,
   }
+}
+
+/** A video frame as a photo, with the box where the cube was found. */
+function photoFromFrame(frame: ImageData, box: Box): Photo {
+  const canvas = document.createElement('canvas')
+  canvas.width = frame.width
+  canvas.height = frame.height
+  canvas.getContext('2d')!.putImageData(frame, 0, 0)
+  return { pixels: frame, url: canvas.toDataURL('image/jpeg', 0.85), box, autoFound: true }
+}
+
+type VideoProgress = { progress: number; found: number }
+
+/**
+ * Goes through the video and keeps one frame per side, using the same
+ * automatic capture as the live webcam scan (steady, right side, new side).
+ */
+async function sidesFromVideo(
+  file: File,
+  onProgress: (p: VideoProgress) => void,
+  signal: AbortSignal,
+): Promise<(Photo | null)[]> {
+  const auto = new AutoCapture({ steadyMs: 500 })
+  const found: (Photo | null)[] = Array(6).fill(null)
+  let step = 0
+  for await (const { frame, timeMs, progress } of readVideoFrames(file, { signal })) {
+    if (step >= 6) break
+    const box = findFaceBox(frame)?.box ?? centeredBox(frame.width, frame.height, 0.6)
+    const result = auto.push(
+      sampleFace(frame, box),
+      timeMs,
+      SCAN_ORDER[step]!.front,
+      SCAN_ORDER.slice(0, step).map((st) => st.front),
+    )
+    if (result.status === 'capture') {
+      found[step] = photoFromFrame(frame, box)
+      step++
+    }
+    onProgress({ progress, found: step })
+    // Let the page repaint between frames.
+    await new Promise((r) => setTimeout(r, 0))
+  }
+  return found
 }
 
 /** Turns the photo a quarter turn clockwise. */
@@ -67,7 +118,39 @@ export function UploadPage() {
   const [photos, setPhotos] = useState<(Photo | null)[]>(Array(6).fill(null))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [video, setVideo] = useState<VideoProgress | null>(null)
+  const [videoResult, setVideoResult] = useState<string | null>(null)
   const multiRef = useRef<HTMLInputElement>(null)
+  const videoRef = useRef<HTMLInputElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  const addVideo = async (file: File | undefined) => {
+    if (!file) return
+    setError(null)
+    setVideoResult(null)
+    const abort = new AbortController()
+    abortRef.current = abort
+    setVideo({ progress: 0, found: 0 })
+    try {
+      const found = await sidesFromVideo(file, setVideo, abort.signal)
+      if (abort.signal.aborted) return
+      setPhotos((all) => all.map((p, i) => found[i] ?? p))
+      const missing = SCAN_ORDER.filter((_, i) => !found[i]).map((st) => st.front)
+      setVideoResult(
+        missing.length === 0
+          ? 'Found all 6 sides in the video. Check the boxes below, then read your cube.'
+          : `Found ${6 - missing.length} of 6 sides. Missing: ${missing.join(', ')}. Add a photo for ${missing.length === 1 ? 'it' : 'them'} below, or try another video holding each side still for a second.`,
+      )
+    } catch (e) {
+      setError(
+        e instanceof VideoError ? e.message : 'Something went wrong while reading the video.',
+      )
+    } finally {
+      setVideo(null)
+    }
+  }
 
   useEffect(() => reset(), [reset])
 
@@ -114,14 +197,34 @@ export function UploadPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Upload photos</h1>
+          <h1 className="text-2xl font-semibold">Upload photos or a video</h1>
           <p className="text-muted-foreground max-w-2xl text-sm">
             Take one photo of each side, straight on, with the side shown on top at the top of the
-            picture. Take all 6 in the same place and light. We find the cube in each photo; drag
-            the box or change its size if it's off. Photos stay on this computer.
+            picture. Take all 6 in the same place and light. Or record one short video turning the
+            cube through the 6 sides in this order, holding each still for a second. We find the
+            cube for you; drag the box or change its size if it's off. Nothing leaves this computer.
           </p>
         </div>
         <div className="flex gap-2">
+          <input
+            ref={videoRef}
+            type="file"
+            accept="video/*"
+            className="sr-only"
+            aria-label="Choose a video"
+            onChange={(e) => {
+              void addVideo(e.target.files?.[0])
+              e.target.value = ''
+            }}
+          />
+          <Button
+            variant="outline"
+            onClick={() => videoRef.current?.click()}
+            disabled={busy || !!video}
+          >
+            <Film className="size-4" aria-hidden />
+            From a video
+          </Button>
           <input
             ref={multiRef}
             type="file"
@@ -143,6 +246,30 @@ export function UploadPage() {
       {error && (
         <p role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm">
           {error}
+        </p>
+      )}
+
+      {video && (
+        <div className="bg-card space-y-2 rounded-xl border p-4" role="status">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span>Reading the video… found {video.found} of 6 sides</span>
+            <Button variant="ghost" size="sm" onClick={() => abortRef.current?.abort()}>
+              <X className="size-4" aria-hidden />
+              Stop
+            </Button>
+          </div>
+          <div className="bg-muted h-2 overflow-hidden rounded-full">
+            <div
+              className="bg-primary h-full transition-[width]"
+              style={{ width: `${video.progress * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {videoResult && !video && (
+        <p role="status" className="rounded-lg border bg-sky-500/10 p-3 text-sm">
+          {videoResult}
         </p>
       )}
 

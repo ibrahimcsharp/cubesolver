@@ -4,9 +4,19 @@ import { Link, useNavigate } from 'react-router'
 import { capitalize, STICKER_FILL } from '@/components/cube/colors'
 import { Button } from '@/components/ui/button'
 import { buttonVariants } from '@/components/ui/button-variants'
+import { faceThumbnail } from '@/modules/camera/thumbnail'
 import { grabFrame, useCamera } from '@/modules/camera/useCamera'
 import { SCAN_ORDER, type StickerColor } from '@/modules/cube'
-import { centeredBox, nearestNominal, sampleFace, type FaceSample } from '@/modules/vision'
+import {
+  AUTO_CAPTURE_HINT,
+  AutoCapture,
+  centeredBox,
+  nearestNominal,
+  sampleFace,
+  type AutoCaptureResult,
+  type FaceSample,
+} from '@/modules/vision'
+import { playCaptureSound } from '@/lib/sound'
 import { cn } from '@/lib/utils'
 import { useScanStore } from '@/store/scanStore'
 
@@ -16,6 +26,8 @@ const FRAME_INTERVAL_MS = 100
 type Live = {
   sample: FaceSample
   guesses: StickerColor[]
+  /** What automatic capture thinks of this frame (when it is on). */
+  auto: AutoCaptureResult | null
   /** Box position as % of the frame. */
   box: { left: number; top: number; size: number; sizeY: number }
 }
@@ -35,8 +47,13 @@ export function ScanPage() {
   const [live, setLive] = useState<Live | null>(null)
   const [aspect, setAspect] = useState(16 / 9)
   const [flash, setFlash] = useState(false)
+  const [autoOn, setAutoOn] = useState(true)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const latest = useRef<{ live: Live; frame: ImageData } | null>(null)
+  const autoRef = useRef<AutoCapture | null>(null)
+  // The frame loop runs outside React, so it reads the latest values from refs.
+  const stateRef = useRef({ step: 0, allDone: false, autoOn: true, scanned: [] as StickerColor[] })
+  const captureRef = useRef<() => void>(() => undefined)
 
   const step = Math.max(
     0,
@@ -46,7 +63,19 @@ export function ScanPage() {
   const current = SCAN_ORDER[allDone ? 5 : step]!
 
   // Start fresh each time the page opens.
-  useEffect(() => reset(), [reset])
+  useEffect(() => {
+    reset()
+    autoRef.current = new AutoCapture()
+  }, [reset])
+
+  useEffect(() => {
+    stateRef.current = {
+      step,
+      allDone,
+      autoOn,
+      scanned: SCAN_ORDER.filter((_, i) => faces[i]).map((s) => s.front),
+    }
+  }, [step, allDone, autoOn, faces])
 
   // Read the guide box about 10 times a second.
   useEffect(() => {
@@ -65,8 +94,14 @@ export function ScanPage() {
       setAspect(frame.width / frame.height)
       const box = centeredBox(frame.width, frame.height, BOX_SHARE)
       const sample = sampleFace(frame, box)
+      const st = stateRef.current
+      const auto =
+        st.autoOn && !st.allDone && autoRef.current
+          ? autoRef.current.push(sample, t, SCAN_ORDER[st.step]!.front, st.scanned)
+          : null
       const next: Live = {
         sample,
+        auto,
         guesses: sample.stickers.map((s) => nearestNominal(s.lab)),
         box: {
           left: (box.x / frame.width) * 100,
@@ -77,6 +112,7 @@ export function ScanPage() {
       }
       latest.current = { live: next, frame }
       setLive(next)
+      if (auto?.status === 'capture') captureRef.current()
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
@@ -87,21 +123,25 @@ export function ScanPage() {
     if (!got || allDone) return
     const { frame, live: l } = got
     const box = centeredBox(frame.width, frame.height, BOX_SHARE)
-    // Small picture of the face as the camera sees it (from outside the cube).
-    const thumb = document.createElement('canvas')
-    thumb.width = thumb.height = 96
-    const src = document.createElement('canvas')
-    src.width = frame.width
-    src.height = frame.height
-    src.getContext('2d')?.putImageData(frame, 0, 0)
-    thumb.getContext('2d')?.drawImage(src, box.x, box.y, box.size, box.size, 0, 0, 96, 96)
     setFace(step, {
       rgbs: l.sample.stickers.map((s) => s.rgb),
-      thumbnail: thumb.toDataURL('image/jpeg', 0.8),
+      // Small picture of the face as the camera sees it (from outside the cube).
+      thumbnail: faceThumbnail(frame, box),
     })
+    playCaptureSound()
+    navigator.vibrate?.(40)
     setFlash(true)
     window.setTimeout(() => setFlash(false), 250)
   }, [allDone, setFace, step])
+
+  useEffect(() => {
+    captureRef.current = capture
+  }, [capture])
+
+  const retake = (i: number) => {
+    autoRef.current?.forget(SCAN_ORDER[i]!.front)
+    setFace(i, null)
+  }
 
   // Space bar captures.
   useEffect(() => {
@@ -122,8 +162,12 @@ export function ScanPage() {
   }
 
   const centerGuess = live?.guesses[4]
-  const wrongSide = !!live?.sample.looksLikeFace && centerGuess !== current.front
+  const autoStatus = autoOn ? live?.auto?.status : undefined
+  const wrongSide = autoOn
+    ? autoStatus === 'wrong-side'
+    : !!live?.sample.looksLikeFace && centerGuess !== current.front
   const ready = !!live?.sample.looksLikeFace && !live.sample.glare && !live.sample.tooDark
+  const progress = autoOn ? (live?.auto?.progress ?? 0) : 0
 
   return (
     <div className="space-y-6">
@@ -173,6 +217,14 @@ export function ScanPage() {
                       />
                     </div>
                   ))}
+                  {progress > 0 && (
+                    <div className="absolute inset-x-0 -bottom-3 h-1.5 overflow-hidden rounded-full bg-black/50">
+                      <div
+                        className="ml-auto h-full bg-green-400 transition-[width] duration-100"
+                        style={{ width: `${progress * 100}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -245,7 +297,7 @@ export function ScanPage() {
               <li key={s.front}>
                 <button
                   type="button"
-                  onClick={() => setFace(i, null)}
+                  onClick={() => retake(i)}
                   disabled={!faces[i]}
                   title={faces[i] ? `Retake the ${s.front} side` : `${capitalize(s.front)} side`}
                   aria-label={
@@ -298,13 +350,27 @@ export function ScanPage() {
               <p className="text-base">{current.instruction}</p>
 
               <div aria-live="polite" className="min-h-10 space-y-1 text-sm">
-                {camStatus === 'live' && live?.sample.tooDark && (
+                {camStatus === 'live' && autoStatus && autoStatus !== 'wrong-side' && (
+                  <p
+                    className={cn(
+                      autoStatus === 'steadying' || autoStatus === 'capture'
+                        ? 'text-green-500'
+                        : autoStatus === 'too-dark' || autoStatus === 'glare'
+                          ? 'text-amber-500'
+                          : 'text-muted-foreground',
+                    )}
+                  >
+                    {AUTO_CAPTURE_HINT[autoStatus]}
+                  </p>
+                )}
+                {!autoOn && camStatus === 'live' && live?.sample.tooDark && (
                   <p className="text-amber-500">Too dark. Turn on a light or face a window.</p>
                 )}
-                {camStatus === 'live' && live?.sample.glare && (
+                {!autoOn && camStatus === 'live' && live?.sample.glare && (
                   <p className="text-amber-500">Glare on the stickers. Tilt the cube a little.</p>
                 )}
-                {camStatus === 'live' &&
+                {!autoOn &&
+                  camStatus === 'live' &&
                   live &&
                   !live.sample.looksLikeFace &&
                   !live.sample.tooDark && (
@@ -316,10 +382,20 @@ export function ScanPage() {
                     camera.
                   </p>
                 )}
-                {camStatus === 'live' && ready && !wrongSide && (
+                {!autoOn && camStatus === 'live' && ready && !wrongSide && (
                   <p className="text-green-500">Looks good. Hold still and capture.</p>
                 )}
               </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={autoOn}
+                  onChange={(e) => setAutoOn(e.target.checked)}
+                  className="size-4"
+                />
+                Capture automatically when the cube is held still
+              </label>
 
               <Button
                 size="lg"
@@ -328,10 +404,10 @@ export function ScanPage() {
                 disabled={camStatus !== 'live'}
               >
                 <Camera className="size-4" aria-hidden />
-                Capture (Space)
+                {autoOn ? 'Capture now (Space)' : 'Capture (Space)'}
               </Button>
               {step > 0 && (
-                <Button variant="ghost" size="sm" onClick={() => setFace(step - 1, null)}>
+                <Button variant="ghost" size="sm" onClick={() => retake(step - 1)}>
                   <RotateCcw className="size-4" aria-hidden />
                   Redo the last side
                 </Button>

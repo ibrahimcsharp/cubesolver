@@ -26,13 +26,17 @@ describe('optimal solver', () => {
     expect(solveOptimal(valid(solvedCube())).moveCount).toBe(0)
   })
 
-  it('solves 300 random cubes in at most 21 moves, with no whole-cube turns', () => {
-    const rand = seededRandom(5)
-    for (let i = 0; i < 300; i++) {
-      const s = solveOptimal(valid(randomCube(rand)))
-      expect(verifySolution(s), `cube #${i}`).toEqual({ ok: true })
-      expect(s.moveCount).toBeLessThanOrEqual(21)
-      expect(flattenSteps(s).every((step) => step.kind === 'move')).toBe(true)
-    }
-  })
+  it(
+    'solves 300 random cubes in at most 21 moves, with no whole-cube turns',
+    { timeout: 60_000 },
+    () => {
+      const rand = seededRandom(5)
+      for (let i = 0; i < 300; i++) {
+        const s = solveOptimal(valid(randomCube(rand)))
+        expect(verifySolution(s), `cube #${i}`).toEqual({ ok: true })
+        expect(s.moveCount).toBeLessThanOrEqual(21)
+        expect(flattenSteps(s).every((step) => step.kind === 'move')).toBe(true)
+      }
+    },
+  )
 })

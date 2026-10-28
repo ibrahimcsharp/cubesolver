@@ -17,3 +17,16 @@ Finding the cube face in a photo (prototype): 30 of 30 test photos, with the box
 ## What changed because of these tests
 
 The first version compared every sticker against the 6 center stickers directly. When photos had different lighting, red and orange swapped (69% correct). The reader now works out a brightness and tint correction for each photo while it reads the colors (see `classify.ts`).
+
+## Automatic capture (Phase 5)
+
+Measured by `src/modules/vision/autoCapture.test.ts`: simulated hand-held scans, 10 frames a second, about 1 s of turning between sides and 1.2 s holding each side still (about 13 s per scan).
+
+| Condition                                    | Result                                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Daylight, warm bulb, dim room (8 scans each) | All 6 sides captured in order, every time, hands-free; 98%+ of stickers read correctly |
+| Side held still for 4 s                      | Not captured twice                                                                     |
+| Wrong side facing the camera                 | Not captured                                                                           |
+| Cube moving                                  | Not captured                                                                           |
+
+A browser test also records a real WebM video of a cube being turned through the 6 sides and uploads it: all 6 sides are found and read. A first version missed the last side, because the end of a recording can be cut short; the reader now always checks the final frame.

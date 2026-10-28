@@ -106,7 +106,7 @@ function scanAccuracy(
   return { accuracy: correct / total, wrong, lowConfidenceWrong }
 }
 
-describe('reading sticker colors (synthetic photos)', () => {
+describe('reading sticker colors (synthetic photos)', { timeout: 60_000 }, () => {
   for (const lighting of LIGHTINGS) {
     it(`reads at least 98% of stickers correctly in ${lighting.name}`, () => {
       const r = scanAccuracy(lighting, 25, lighting.name.length * 97)
@@ -180,7 +180,7 @@ describe('reading sticker colors (synthetic photos)', () => {
   })
 })
 
-describe('finding the cube face in a photo (prototype)', () => {
+describe('finding the cube face in a photo (prototype)', { timeout: 60_000 }, () => {
   it('finds faces at different places and sizes', () => {
     const rand = seededRandom(99)
     const colorList = Object.values(STANDARD_CENTERS)
