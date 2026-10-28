@@ -12,17 +12,19 @@ See **[PLAN.md](PLAN.md)** for the full product plan and phases.
 
 ## Commands
 
-| Command            | What it does                                                                |
-| ------------------ | --------------------------------------------------------------------------- |
-| `npm install`      | Install dependencies                                                        |
-| `npm run dev`      | Start the dev server at http://localhost:5173                               |
-| `npm run build`    | Type-check and build to `dist/`                                             |
-| `npm run preview`  | Serve the built app                                                         |
-| `npm run lint`     | Lint with oxlint                                                            |
-| `npm run format`   | Format all files with Prettier                                              |
-| `npm test`         | Run unit tests (Vitest)                                                     |
-| `npm run test:e2e` | Run browser tests (Playwright; first run `npx playwright install chromium`) |
-| `npm run check`    | Lint + format check + tests + build (same as CI)                            |
+| Command                       | What it does                                                                |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| `npm install`                 | Install dependencies                                                        |
+| `npm run dev`                 | Start the dev server at http://localhost:5173                               |
+| `npm run build`               | Type-check and build to `dist/`                                             |
+| `npm run preview`             | Serve the built app                                                         |
+| `npm run lint`                | Lint with oxlint                                                            |
+| `npm run format`              | Format all files with Prettier                                              |
+| `npm test`                    | Run unit tests (Vitest)                                                     |
+| `npm run test:e2e`            | Run browser tests (Playwright; first run `npx playwright install chromium`) |
+| `npm run check`               | Lint + format check + tests + build (same as CI)                            |
+| `npm run bench:solvers`       | 10,000-cube solver benchmark (slow)                                         |
+| `node scripts/make-icons.mjs` | Redraw the app icons in `public/`                                           |
 
 ## Project layout
 
@@ -39,6 +41,10 @@ e2e/            Playwright browser tests
 test-data/      Guide and labels for test cube photos/videos
 docs/decisions/ Technical decisions
 ```
+
+## Install and offline
+
+The built app is installable (browser menu → Install) and works offline after the first visit. The service worker is only active in the built app (`npm run build && npm run preview`), not in `npm run dev`.
 
 ## Deployment
 

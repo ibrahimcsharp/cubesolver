@@ -15,6 +15,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { capitalize } from '@/components/cube/colors'
 import { CubeNet } from '@/components/cube/CubeNet'
+import { ExportPanel } from '@/components/ExportPanel'
 import { stepAnimation, turnDuration } from '@/components/cube3d/animation'
 import { canUse3D } from '@/components/cube3d/webgl'
 import { Button } from '@/components/ui/button'
@@ -439,6 +440,8 @@ function SolutionView({ solution }: { solution: Solution }) {
 
         <StepList steps={steps} index={index} onSelect={go} />
       </div>
+
+      <ExportPanel solution={solution} />
     </div>
   )
 }

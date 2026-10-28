@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const PORT = 4173
+const HEAVY = /(export|video-upload)\.spec\.ts$/
 
 export default defineConfig({
   testDir: './e2e',
@@ -12,7 +13,21 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: 'on-first-retry',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      testIgnore: HEAVY,
+    },
+    {
+      // Video encoding/decoding uses a lot of CPU; run these after the rest so
+      // the timing-sensitive tests (animations, live checks) aren't starved.
+      name: 'heavy',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: HEAVY,
+      dependencies: ['chromium'],
+    },
+  ],
   webServer: {
     command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}`,

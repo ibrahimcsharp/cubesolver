@@ -246,7 +246,7 @@ function Scene({ views, steps, index, colorOf, quarterMs }: Omit<CubePlayer3DPro
 export default function CubePlayer3D({ label, ...props }: CubePlayer3DProps) {
   return (
     <div role="img" aria-label={label} className="aspect-square w-full touch-none">
-      <Canvas camera={{ position: [4.4, 3.7, 5.6], fov: 34 }} dpr={[1, 2]}>
+      <Canvas camera={{ position: [5.3, 4.45, 6.7], fov: 34 }} dpr={[1, 2]}>
         <Scene {...props} />
       </Canvas>
     </div>
