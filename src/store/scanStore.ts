@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand'
 import type { StickerColor } from '@/modules/cube'
-import { reconstructCube, type RGB } from '@/modules/vision'
+import { reconstructCube, type Reconstruction, type RGB } from '@/modules/vision'
 import { useCubeStore } from './cubeStore'
 
 export type CapturedFace = {
@@ -28,7 +28,7 @@ type ScanState = {
   setFace: (slot: number, face: CapturedFace | null) => void
   reset: () => void
   /** Reads all 6 sides, fills the cube map, and marks uncertain stickers. */
-  finish: (source: 'scan' | 'upload') => void
+  finish: (source: 'scan' | 'upload') => Reconstruction
   markChecked: (index: number) => void
 }
 
@@ -52,6 +52,7 @@ export const useScanStore = create<ScanState>()((set, get) => ({
     const result = reconstructCube(faces.map((f) => f!.rgbs))
     useCubeStore.getState().setAll(result.colors)
     set({ source, sides: result.sides, uncertain: result.uncertain, suspects: result.suspects })
+    return result
   },
   markChecked: (index) => set((s) => ({ uncertain: s.uncertain.filter((i) => i !== index) })),
 }))

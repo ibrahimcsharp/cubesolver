@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { goToSolution, waitForCaptures } from './helpers'
 import {
   applyMoves,
   parseMoves,
@@ -95,14 +96,10 @@ test('ignores a wall, follows an off-center cube, and reads a mirroring webcam',
     await show(null)
     await page.waitForTimeout(500)
     await show(colors)
-    await expect(page.getByRole('button', { name: /^Retake side/ })).toHaveCount(i + 1, {
-      timeout: 10_000,
-    })
+    await waitForCaptures(page, i + 1)
   }
 
-  await page.getByRole('button', { name: 'Read my cube' }).click()
-  await expect(page).toHaveURL(/\/check$/)
-  await page.getByRole('button', { name: /check & solve/i }).click()
+  await goToSolution(page)
   await expect(page.getByRole('heading', { name: 'Your solution' })).toBeVisible()
   const stored = await page.evaluate(
     () => JSON.parse(localStorage.getItem('cubesolver-cube')!).state.stickers as string[],

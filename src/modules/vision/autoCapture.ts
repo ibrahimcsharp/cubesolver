@@ -53,8 +53,8 @@ export type AutoCaptureOptions = {
 }
 
 export const DEFAULT_AUTO_CAPTURE: AutoCaptureOptions = {
-  steadyMs: 600,
-  maxChange: 18,
+  steadyMs: 400,
+  maxChange: 20,
   minChangeFromLast: 14,
 }
 

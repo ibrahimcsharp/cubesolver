@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { waitForCaptures } from './helpers'
 
 /** Webcam scan with a fake camera: each side is shown, held still, and captured automatically. */
 test('webcam scan captures all 6 sides hands-free', async ({ page }) => {
@@ -48,15 +49,11 @@ test('webcam scan captures all 6 sides hands-free', async ({ page }) => {
     await show(null)
     await page.waitForTimeout(400)
     await show(color)
-    // The side's progress button turns into "Retake" once it has been captured.
-    await expect(page.getByRole('button', { name: /^Retake side/ })).toHaveCount(i + 1, {
-      timeout: 8000,
-    })
+    await waitForCaptures(page, i + 1)
   }
 
-  await expect(page.getByText('All 6 sides scanned.')).toBeVisible()
-  await page.getByRole('button', { name: 'Read my cube' }).click()
-  await expect(page).toHaveURL(/\/check$/)
-  await page.getByRole('button', { name: /check & solve/i }).click()
+  // After the 6th side the app reads the cube by itself; a clear reading goes
+  // straight to the solution, with no extra clicks.
+  await expect(page).toHaveURL(/\/solution$/)
   await expect(page.getByText('This cube is already solved. Nothing to do!')).toBeVisible()
 })

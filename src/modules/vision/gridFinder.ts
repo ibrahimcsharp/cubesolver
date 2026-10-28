@@ -196,3 +196,57 @@ export function findFaceBox(img: Pixels): FoundFace | null {
     score: best.score,
   }
 }
+
+/**
+ * Fast follow-up search: looks only around where the cube was last found
+ * (a little bigger/smaller, a little to each side). Much cheaper than
+ * findFaceBox, so it can run on every frame while the cube is in view.
+ * Returns null if the cube isn't near there any more.
+ */
+export function findFaceBoxNear(img: Pixels, last: Box, minScore = 0.25): FoundFace | null {
+  const { px, scale } = downscale(img)
+  const I = integral(px)
+  const inside = (x: number, y: number, s: number) =>
+    x >= 0 && y >= 0 && x + s <= px.width && y + s <= px.height && s >= 8
+  const lx = last.x * scale
+  const ly = last.y * scale
+  const ls = last.size * scale
+
+  let best = { x: lx, y: ly, s: ls, score: -Infinity }
+  for (let s = ls * 0.82; s <= ls * 1.22; s *= 1.05) {
+    const step = Math.max(0.75, s / 20)
+    const cx = lx + ls / 2
+    const cy = ly + ls / 2
+    for (let dy = -0.35 * ls; dy <= 0.35 * ls; dy += step)
+      for (let dx = -0.35 * ls; dx <= 0.35 * ls; dx += step) {
+        const x = cx + dx - s / 2
+        const y = cy + dy - s / 2
+        if (!inside(x, y, s)) continue
+        const sc = score(I, x, y, s)
+        if (sc > best.score) best = { x, y, s, score: sc }
+      }
+  }
+  // One fine pass around the best.
+  const b = best
+  const step = Math.max(0.5, b.s / 60)
+  for (let ds = -2; ds <= 2; ds++)
+    for (let dy = -3; dy <= 3; dy++)
+      for (let dx = -3; dx <= 3; dx++) {
+        const x = b.x + dx * step
+        const y = b.y + dy * step
+        const s = b.s + ds * step
+        if (!inside(x, y, s)) continue
+        const sc = score(I, x, y, s)
+        if (sc > best.score) best = { x, y, s, score: sc }
+      }
+
+  if (best.score < minScore) return null
+  return {
+    box: {
+      x: Math.round(best.x / scale),
+      y: Math.round(best.y / scale),
+      size: Math.round(best.s / scale),
+    },
+    score: best.score,
+  }
+}

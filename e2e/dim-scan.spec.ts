@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { goToSolution, waitForCaptures } from './helpers'
 import {
   applyMoves,
   parseMoves,
@@ -101,15 +102,10 @@ test('scans a scrambled cube in a dim room, sides in any order and turned', asyn
     await show(null)
     await page.waitForTimeout(400)
     await show(colors)
-    await expect(page.getByRole('button', { name: /^Retake side/ })).toHaveCount(i + 1, {
-      timeout: 10_000,
-    })
+    await waitForCaptures(page, i + 1)
   }
 
-  await page.getByRole('button', { name: 'Read my cube' }).click()
-  await expect(page).toHaveURL(/\/check$/)
-  await page.getByRole('button', { name: /check & solve/i }).click()
-  await expect(page).toHaveURL(/\/solution$/)
+  await goToSolution(page)
   await expect(page.getByRole('heading', { name: 'Your solution' })).toBeVisible()
 
   // And it's the right cube.

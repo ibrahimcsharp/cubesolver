@@ -8,22 +8,19 @@ import {
   Sun,
   Upload,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { capitalize, STICKER_FILL } from '@/components/cube/colors'
 import { Button } from '@/components/ui/button'
 import { buttonVariants } from '@/components/ui/button-variants'
 import { faceThumbnail } from '@/modules/camera/thumbnail'
 import { grabFrame, useCamera } from '@/modules/camera/useCamera'
-import { SCAN_ORDER, type StickerColor } from '@/modules/cube'
+import { SCAN_ORDER, validateColors, type StickerColor } from '@/modules/cube'
 import {
   AUTO_CAPTURE_HINT,
   AutoCapture,
-  centeredBox,
-  findFaceBox,
-  nearestNominal,
-  rgbToLab,
-  sampleFace,
+  FrameClient,
+  LiveColors,
   type AutoCaptureResult,
   type Box,
   type FaceSample,
@@ -31,12 +28,11 @@ import {
 } from '@/modules/vision'
 import { playCaptureSound } from '@/lib/sound'
 import { cn } from '@/lib/utils'
+import { useCubeStore } from '@/store/cubeStore'
 import { useScanStore } from '@/store/scanStore'
 
-const BOX_SHARE = 0.6
-const FRAME_INTERVAL_MS = 100
-/** How often to search the whole picture for the cube. */
-const FIND_EVERY_MS = 450
+/** About 15 looks a second; the work happens in a background worker. */
+const FRAME_INTERVAL_MS = 66
 /** Frames averaged for a manual capture (cancels camera grain in low light). */
 const MANUAL_FRAMES = 6
 
@@ -83,9 +79,11 @@ export function ScanPage() {
   const [refused, setRefused] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const latest = useRef<{ live: Live; frame: ImageData; box: Box } | null>(null)
-  /** Where the cube was last found in the picture, and when we last looked. */
-  const tracked = useRef<{ box: Box | null; at: number }>({ box: null, at: -Infinity })
   const recent = useRef<RGB[][]>([])
+  /** Live color guesses that learn this room's light from captured sides. */
+  const colorsRef = useRef(new LiveColors())
+  const [reading, setReading] = useState(false)
+  const readCubeRef = useRef<() => void>(() => undefined)
   const autoRef = useRef<AutoCapture | null>(null)
   // The frame loop runs outside React, so it reads the latest values from refs.
   const stateRef = useRef({ allDone: false, autoOn: true })
@@ -99,7 +97,10 @@ export function ScanPage() {
   const allDone = count === 6
 
   // Suggest a side not shown yet (only a suggestion: any order works).
-  const shownColors = faces.flatMap((f) => (f ? [nearestNominal(rgbToLab(f.rgbs[4]!))] : []))
+  const shownColors = useMemo(
+    () => new LiveColors().learn(faces.flatMap((f) => (f ? [f.rgbs[4]!] : []))),
+    [faces],
+  )
   const suggestion = SCAN_ORDER.find((s) => !shownColors.includes(s.front)) ?? SCAN_ORDER[count]!
 
   // Start fresh each time the page opens.
@@ -112,6 +113,11 @@ export function ScanPage() {
     stateRef.current = { allDone, autoOn }
   }, [allDone, autoOn])
 
+  // Each captured side teaches the live color dots what its color looks like here.
+  useEffect(() => {
+    colorsRef.current.learn(faces.flatMap((f) => (f ? [f.rgbs[4]!] : [])))
+  }, [faces])
+
   // Screen light: a bright white page lights the cube from the front.
   useEffect(() => {
     const root = document.documentElement
@@ -120,55 +126,59 @@ export function ScanPage() {
     return () => root.removeAttribute('data-screen-light')
   }, [screenLight])
 
-  // Read the guide box about 10 times a second.
+  // Look at the camera about 15 times a second. Finding the cube and reading
+  // its colors happens in a background worker, so the page stays smooth.
   useEffect(() => {
     if (camStatus !== 'live') return
+    const client = new FrameClient()
     let raf = 0
     let last = 0
+    let busy = false
+    let stopped = false
     const canvas = (canvasRef.current ??= document.createElement('canvas'))
     const tick = (t: number) => {
       raf = requestAnimationFrame(tick)
-      if (t - last < FRAME_INTERVAL_MS) return
-      last = t
+      if (busy || t - last < FRAME_INTERVAL_MS) return
       const video = videoRef.current
       if (!video) return
       const frame = grabFrame(video, canvas)
       if (!frame) return
-      setAspect(frame.width / frame.height)
-      // Find the cube in the picture about twice a second (it's a bigger
-      // search); in between, keep reading where it was last found.
-      if (t - tracked.current.at > FIND_EVERY_MS) {
-        const found = findFaceBox(frame)
-        const big = found && found.box.size >= Math.min(frame.width, frame.height) * 0.28
-        tracked.current = { box: big ? found.box : null, at: t }
-      }
-      const box = tracked.current.box ?? centeredBox(frame.width, frame.height, BOX_SHARE)
-      const sample = sampleFace(frame, box)
-      recent.current = [...recent.current, sample.stickers.map((s) => s.rgb)].slice(-MANUAL_FRAMES)
-      const st = stateRef.current
-      // Any side not captured yet is accepted; the cube is worked out at the end.
-      const auto =
-        st.autoOn && !st.allDone && autoRef.current ? autoRef.current.push(sample, t) : null
-      const next: Live = {
-        sample,
-        auto,
-        guesses: sample.stickers.map((s) => nearestNominal(s.lab)),
-        box: {
-          left: (box.x / frame.width) * 100,
-          top: (box.y / frame.height) * 100,
-          size: (box.size / frame.width) * 100,
-          sizeY: (box.size / frame.height) * 100,
-        },
-      }
-      latest.current = { live: next, frame, box }
-      // If the cube isn't where we thought, look again soon (but not every frame).
-      if (!sample.looksLikeFace)
-        tracked.current.at = Math.min(tracked.current.at, t - FIND_EVERY_MS + 200)
-      setLive(next)
-      if (auto?.status === 'capture') captureRef.current(auto.rgbs)
+      last = t
+      busy = true
+      void client.analyze(frame, t).then((res) => {
+        busy = false
+        if (stopped || !res) return
+        const { sample, box } = res
+        setAspect(frame.width / frame.height)
+        recent.current = [...recent.current, sample.stickers.map((x) => x.rgb)].slice(
+          -MANUAL_FRAMES,
+        )
+        const st = stateRef.current
+        // Any side not captured yet is accepted; the cube is worked out at the end.
+        const auto =
+          st.autoOn && !st.allDone && autoRef.current ? autoRef.current.push(sample, t) : null
+        const next: Live = {
+          sample,
+          auto,
+          guesses: sample.stickers.map((x) => colorsRef.current.guess(x.rgb)),
+          box: {
+            left: (box.x / frame.width) * 100,
+            top: (box.y / frame.height) * 100,
+            size: (box.size / frame.width) * 100,
+            sizeY: (box.size / frame.height) * 100,
+          },
+        }
+        latest.current = { live: next, frame, box }
+        setLive(next)
+        if (auto?.status === 'capture') captureRef.current(auto.rgbs)
+      })
     }
     raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      stopped = true
+      cancelAnimationFrame(raf)
+      client.dispose()
+    }
   }, [camStatus, videoRef])
 
   /** Saves a side: the averaged colors from auto-capture, or the last few frames averaged. */
@@ -193,8 +203,13 @@ export function ScanPage() {
       navigator.vibrate?.(40)
       setFlash(true)
       window.setTimeout(() => setFlash(false), 250)
+      // That was the last side: read the cube straight away.
+      if (count + 1 === 6) {
+        setReading(true)
+        window.setTimeout(() => readCubeRef.current(), 450)
+      }
     },
-    [allDone, setFace, slot],
+    [allDone, count, setFace, slot],
   )
 
   useEffect(() => {
@@ -219,11 +234,24 @@ export function ScanPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [camStatus, capture])
 
+  /**
+   * Reads the cube. If it is clearly right, go straight to the solution;
+   * otherwise open the Check screen to look it over.
+   */
   const readCube = () => {
-    finish('scan')
+    const result = finish('scan')
     stopCamera()
-    navigate('/check')
+    const valid = validateColors(result.colors)
+    if (valid.ok && result.uncertain.length === 0 && result.suspects.length === 0) {
+      useCubeStore.getState().setCube(valid)
+      navigate('/solution')
+    } else {
+      navigate('/check')
+    }
   }
+  useEffect(() => {
+    readCubeRef.current = readCube
+  })
 
   const autoStatus = autoOn ? live?.auto?.status : undefined
   const ready = !!live?.sample.looksLikeFace && !live.sample.glare && !live.sample.tooDark
@@ -427,7 +455,9 @@ export function ScanPage() {
 
           {allDone ? (
             <div className="space-y-3">
-              <p className="font-medium">All 6 sides scanned.</p>
+              <p className="font-medium">
+                {reading ? 'Reading your cube…' : 'All 6 sides scanned.'}
+              </p>
               <p className="text-muted-foreground text-sm">
                 Tap a side above to retake it, or read the cube now.
               </p>
