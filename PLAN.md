@@ -31,7 +31,7 @@ A **web app** that runs in the browser on a laptop or PC. The user shows a scram
 ### Solution styles (toggle anywhere)
 
 - **Optimal (Fast):** about 20 moves. Best for experienced users.
-- **Beginner (Learn):** about 80–120 moves, grouped into 7 named stages, each explained. Best for learning.
+- **Beginner (Learn):** about 130–200 moves (155 on average in testing), grouped into 7 named stages, each explained. Best for learning.
 
 The user can switch between them at any time. Every output (steps, 3D, live, PDF, video) works with both styles.
 
@@ -49,7 +49,7 @@ Everything runs **in the browser**. No server is needed for the core features. T
 | App state | Zustand |
 | Webcam | Browser camera API (`getUserMedia`) |
 | Computer vision | OpenCV.js running in a Web Worker (background thread) |
-| Optimal solver | Kociemba two-phase algorithm (`cubejs` or `min2phase.js`; license to be checked) |
+| Optimal solver | Kociemba two-phase algorithm via `min2phase.js` (MIT; see docs/decisions/0001) |
 | Beginner solver | Our own implementation of the layer-by-layer method (Section 7) |
 | 3D cube | three.js via React Three Fiber |
 | Live arrows overlay | HTML canvas layered over the video |

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
+import type { SolveStyle } from '@/modules/solution'
 
-/** "optimal" = about 20 moves; "beginner" = 7-stage layer-by-layer method. */
-export type SolveStyle = 'optimal' | 'beginner'
+export type { SolveStyle }
 
 type SettingsState = {
   solveStyle: SolveStyle
