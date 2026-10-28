@@ -61,4 +61,42 @@ describe('rebuilding the cube from 6 captures', { timeout: 120_000 }, () => {
     const order = ['green', 'red', 'blue', 'orange', 'white', 'yellow']
     expect(r.sides).toEqual(sim.shown.map((s) => order[s.step]))
   })
+
+  it('reads a webcam that sends mirror images', () => {
+    for (let n = 0; n < 6; n++) {
+      const sim = simulateScan({
+        lighting: LIGHTINGS[0]!,
+        seed: 300 + n,
+        shuffle: true,
+        turn: true,
+      })
+      const mirrored = sim.captures.map((c) => [2, 1, 0, 5, 4, 3, 8, 7, 6].map((i) => c[i]!))
+      const r = reconstructCube(mirrored)
+      expect(r.colors).toEqual(sim.truth)
+      expect(r.mirrored).toBe(true)
+    }
+  })
+
+  it('points at the bad photo when one capture is junk, or flags what it guessed', () => {
+    let named = 0
+    for (let n = 0; n < 6; n++) {
+      const sim = simulateScan({
+        lighting: LIGHTINGS[0]!,
+        seed: 600 + n,
+        shuffle: true,
+        turn: true,
+      })
+      const junk = sim.captures.map((c, k) =>
+        k === n ? c.map((_, i) => (i === 4 ? c[4]! : ([200 + i, 190, 170] as const))) : c,
+      )
+      const r = reconstructCube(junk)
+      if (r.suspects.includes(n)) named++
+      if (r.valid) {
+        // If it repaired its way to a real cube, every sticker it got wrong is flagged.
+        const wrong = r.colors.flatMap((c, i) => (c === sim.truth[i] ? [] : [i]))
+        for (const i of wrong) expect(r.uncertain).toContain(i)
+      }
+    }
+    expect(named).toBeGreaterThanOrEqual(4)
+  })
 })

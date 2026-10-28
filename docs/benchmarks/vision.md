@@ -53,3 +53,14 @@ Simulated scans of 30 random cubes each (`src/modules/vision/scan-sim.ts`):
 - Captures average all the frames from when the cube was held still, which cancels camera grain.
 - The "is a cube side in the box" check judges evenness against the picture's own grain, compares the two halves of each sticker area (so a cube held half a sticker off is rejected even in dim light), ignores glare pixels, and only refuses nearly black pictures.
 - Scan screen: any order and any way up; clearer wording; **Screen light** (bright white page to light the cube); camera brightness and torch controls where the camera supports them.
+
+## Fix: many impossible pieces after a real webcam scan (2026-10-29)
+
+A real scan showed 11 impossible corners and edges, too many for a few misread stickers. Likely causes, now handled:
+
+| Cause                                                                  | Fix                                                                                                                                                                        |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A wall, shirt or hand in the box was saved as a side (9 "even" colors) | A side is only accepted if the lines between stickers are dark (real cubes: 0.71+ contrast in every test light; plain walls: rejected 20 of 20). "Capture now" refuses too |
+| Cube smaller than the box or off-center, so each square read a mix     | The cube is found anywhere in the picture about twice a second, and the box follows it (works in dim light after making the finder judge contrast relative to brightness)  |
+| Webcam sends mirror images (common with some Windows drivers)          | Reading also tries every side flipped and keeps the real cube                                                                                                              |
+| One bad photo                                                          | The Check screen names the side to retake and outlines its photo; all of that photo's stickers are flagged                                                                 |

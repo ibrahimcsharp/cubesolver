@@ -20,10 +20,12 @@ import {
   AUTO_CAPTURE_HINT,
   AutoCapture,
   centeredBox,
+  findFaceBox,
   nearestNominal,
   rgbToLab,
   sampleFace,
   type AutoCaptureResult,
+  type Box,
   type FaceSample,
   type RGB,
 } from '@/modules/vision'
@@ -33,6 +35,8 @@ import { useScanStore } from '@/store/scanStore'
 
 const BOX_SHARE = 0.6
 const FRAME_INTERVAL_MS = 100
+/** How often to search the whole picture for the cube. */
+const FIND_EVERY_MS = 450
 /** Frames averaged for a manual capture (cancels camera grain in low light). */
 const MANUAL_FRAMES = 6
 
@@ -76,8 +80,11 @@ export function ScanPage() {
   const [flash, setFlash] = useState(false)
   const [autoOn, setAutoOn] = useState(true)
   const [screenLight, setScreenLight] = useState(false)
+  const [refused, setRefused] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const latest = useRef<{ live: Live; frame: ImageData } | null>(null)
+  const latest = useRef<{ live: Live; frame: ImageData; box: Box } | null>(null)
+  /** Where the cube was last found in the picture, and when we last looked. */
+  const tracked = useRef<{ box: Box | null; at: number }>({ box: null, at: -Infinity })
   const recent = useRef<RGB[][]>([])
   const autoRef = useRef<AutoCapture | null>(null)
   // The frame loop runs outside React, so it reads the latest values from refs.
@@ -128,7 +135,14 @@ export function ScanPage() {
       const frame = grabFrame(video, canvas)
       if (!frame) return
       setAspect(frame.width / frame.height)
-      const box = centeredBox(frame.width, frame.height, BOX_SHARE)
+      // Find the cube in the picture about twice a second (it's a bigger
+      // search); in between, keep reading where it was last found.
+      if (t - tracked.current.at > FIND_EVERY_MS) {
+        const found = findFaceBox(frame)
+        const big = found && found.box.size >= Math.min(frame.width, frame.height) * 0.28
+        tracked.current = { box: big ? found.box : null, at: t }
+      }
+      const box = tracked.current.box ?? centeredBox(frame.width, frame.height, BOX_SHARE)
       const sample = sampleFace(frame, box)
       recent.current = [...recent.current, sample.stickers.map((s) => s.rgb)].slice(-MANUAL_FRAMES)
       const st = stateRef.current
@@ -146,7 +160,10 @@ export function ScanPage() {
           sizeY: (box.size / frame.height) * 100,
         },
       }
-      latest.current = { live: next, frame }
+      latest.current = { live: next, frame, box }
+      // If the cube isn't where we thought, look again soon (but not every frame).
+      if (!sample.looksLikeFace)
+        tracked.current.at = Math.min(tracked.current.at, t - FIND_EVERY_MS + 200)
       setLive(next)
       if (auto?.status === 'capture') captureRef.current(auto.rgbs)
     }
@@ -159,8 +176,14 @@ export function ScanPage() {
     (rgbs?: RGB[]) => {
       const got = latest.current
       if (!got || allDone) return
-      const { frame } = got
-      const box = centeredBox(frame.width, frame.height, BOX_SHARE)
+      // Don't save something that isn't a cube side (a wall, a hand, a cube
+      // only half in view): it would make the whole cube unreadable.
+      if (!rgbs && !got.live.sample.looksLikeFace) {
+        setRefused(true)
+        window.setTimeout(() => setRefused(false), 2500)
+        return
+      }
+      const { frame, box } = got
       setFace(slot, {
         rgbs: rgbs ?? averageFrames(recent.current),
         // Small picture of the face as the camera sees it (from outside the cube).
@@ -425,6 +448,12 @@ export function ScanPage() {
               </p>
 
               <div aria-live="polite" className="min-h-10 space-y-1 text-sm">
+                {refused && (
+                  <p className="text-amber-500">
+                    I can't see a whole cube side yet, so nothing was saved. Hold one side flat to
+                    the camera, close enough to fill the box.
+                  </p>
+                )}
                 {camStatus === 'live' && autoStatus && (
                   <p
                     className={cn(

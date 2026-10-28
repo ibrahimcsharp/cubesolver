@@ -25,7 +25,7 @@ import {
   type StickerColor,
 } from '@/modules/cube'
 import { classifyStickers, LOW_CONFIDENCE } from './classify'
-import { fromLinear, NOMINAL_RGB, toLinear, type RGB } from './color'
+import { colorDistance, fromLinear, NOMINAL_RGB, rgbToLab, toLinear, type RGB } from './color'
 import { imageCellsToFacelets, rotateGridClockwise } from './faceMapping'
 import { assign } from './hungarian'
 
@@ -38,7 +38,18 @@ export type Reconstruction = {
   uncertain: number[]
   /** For each capture: which color side it was. */
   sides: StickerColor[]
+  /**
+   * When it isn't a real cube: captures (by index) whose stickers are in the
+   * most impossible pieces, so the user knows which side to retake.
+   */
+  suspects: number[]
+  /** True if the camera turned out to deliver mirror images. */
+  mirrored: boolean
 }
+
+/** A capture flipped left to right (some webcams send mirror images). */
+const MIRROR_CELLS = [2, 1, 0, 5, 4, 3, 8, 7, 6]
+const mirror = (captures: readonly RGB[][]) => captures.map((c) => MIRROR_CELLS.map((i) => c[i]!))
 
 const COLOR_ORDER: StickerColor[] = ['white', 'yellow', 'green', 'blue', 'red', 'orange']
 const FACE_OF_COLOR = Object.fromEntries(
@@ -137,17 +148,30 @@ function bestTurns(captureColors: StickerColor[][], sides: StickerColor[]) {
  */
 export function reconstructCube(rawCaptures: readonly RGB[][]): Reconstruction {
   if (rawCaptures.length !== 6) throw new Error('Need 6 sides')
-  // Read it twice, with and without the whole-cube white balance (it helps a
-  // lot in strongly colored light, a little less with glare), keep the better.
-  const a = readCube(whiteBalance(rawCaptures))
-  if (a.result.valid && a.result.uncertain.length === 0) return a.result
-  const b = readCube(rawCaptures)
-  const rank = (x: typeof a) =>
+  // Read it with and without the whole-cube white balance (it helps a lot in
+  // strongly colored light, a little less with glare), keep the better. If
+  // neither is a real cube, the webcam may be sending mirror images: try that too.
+  const rank = (x: ReturnType<typeof readCube>) =>
     (x.result.valid ? 1000 : 0) - x.result.uncertain.length * 10 + x.meanConfidence
-  return rank(a) >= rank(b) ? a.result : b.result
+  let best = readCube(whiteBalance(rawCaptures), false)
+  if (best.result.valid && best.result.uncertain.length === 0) return best.result
+  const attempts = [
+    () => readCube(rawCaptures, false),
+    () => readCube(whiteBalance(mirror(rawCaptures)), true),
+    () => readCube(mirror(rawCaptures), true),
+  ]
+  for (const attempt of attempts) {
+    const next = attempt()
+    if (rank(next) > rank(best)) best = next
+    if (best.result.valid && best.result.uncertain.length === 0) break
+  }
+  return best.result
 }
 
-function readCube(captures: readonly RGB[][]): { result: Reconstruction; meanConfidence: number } {
+function readCube(
+  captures: readonly RGB[][],
+  mirrored: boolean,
+): { result: Reconstruction; meanConfidence: number } {
   const sides = identifySides(captures)
 
   // 2. Read the stickers. Put each capture where its side goes (turn 0 for now;
@@ -217,9 +241,87 @@ function readCube(captures: readonly RGB[][]): { result: Reconstruction; meanCon
         uncertain.add(f)
     }),
   )
+  // A capture that doesn't match the cube's colors: flag all its stickers and
+  // name it, even if the result looks like a real cube.
+  const outlier = misfitOutlier(captures)
+  if (outlier !== null)
+    PLACEMENTS[sides[outlier]!]![best.turns[outlier]!]!.forEach((f) => {
+      if (!centerSet.has(f)) uncertain.add(f)
+    })
   const meanConfidence = read.confidence.reduce((s, c) => s + c, 0) / read.confidence.length
   return {
-    result: { colors, valid: best.valid, uncertain: [...uncertain].sort((a, b) => a - b), sides },
+    result: {
+      colors,
+      valid: best.valid,
+      uncertain: [...uncertain].sort((a, b) => a - b),
+      sides,
+      suspects: !best.valid
+        ? suspectCaptures(captures, captureColors, captureConfidence, sides, best.turns)
+        : outlier !== null
+          ? [outlier]
+          : [],
+      mirrored,
+    },
     meanConfidence,
   }
+}
+
+/**
+ * A photo of something that isn't the cube (or a blurry one) has stickers
+ * that don't really match any of the 6 middle colors. Returns the one capture
+ * clearly worse than all the others, if there is one.
+ */
+function misfitOutlier(captures: readonly RGB[][]): number | null {
+  const centers = captures.map((c) => rgbToLab(c[4]!))
+  const misfit = captures.map((c) => {
+    const outer = c.filter((_, cell) => cell !== 4).map(rgbToLab)
+    return (
+      outer.reduce((s, lab) => s + Math.min(...centers.map((m) => colorDistance(lab, m))), 0) / 8
+    )
+  })
+  const ranked = misfit.map((m, k) => ({ m, k })).sort((a, b) => b.m - a.m)
+  const others = ranked
+    .slice(1)
+    .map((r) => r.m)
+    .sort((a, b) => a - b)
+  return ranked[0]!.m > Math.max(8, others[2]! * 1.6) ? ranked[0]!.k : null
+}
+
+/**
+ * Which captures look wrong. For each side, we ignore it and count the
+ * impossible pieces left; a single bad photo explains (nearly) all of them.
+ * Ties are broken by how unsure the reader was of that side's colors.
+ */
+function suspectCaptures(
+  captures: readonly RGB[][],
+  captureColors: StickerColor[][],
+  captureConfidence: number[][],
+  sides: StickerColor[],
+  turns: number[],
+): number[] {
+  const outlier = misfitOutlier(captures)
+  if (outlier !== null) return [outlier]
+
+  const owner: number[] = Array(54)
+  captureColors.forEach((_, k) => PLACEMENTS[sides[k]!]![turns[k]!]!.forEach((f) => (owner[f] = k)))
+  const { problems } = fromFacelets(layout(captureColors, sides, turns).join(''))
+  if (problems.length === 0) {
+    // Real pieces but not a real cube (e.g. a piece twice): fall back to doubt.
+    const doubt = captureConfidence.map((conf) => 1 - conf.reduce((a, b) => a + b, 0) / conf.length)
+    const worst = doubt.indexOf(Math.max(...doubt))
+    return [worst]
+  }
+  const left = [0, 1, 2, 3, 4, 5].map(
+    (k) => problems.filter((p) => !p.facelets.some((f) => owner[f] === k)).length,
+  )
+  const fewest = Math.min(...left)
+  // Only point at a side if leaving it out clearly helps.
+  if (fewest > problems.length / 2) return []
+  const doubt = captureConfidence.map((conf) => 1 - conf.reduce((a, b) => a + b, 0) / conf.length)
+  return left
+    .map((n, k) => ({ n, k }))
+    .filter((x) => x.n === fewest)
+    .sort((a, b) => doubt[b.k]! - doubt[a.k]!)
+    .slice(0, 2)
+    .map((x) => x.k)
 }

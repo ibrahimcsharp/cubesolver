@@ -21,6 +21,8 @@ type ScanState = {
   sides: StickerColor[] | null
   /** Sticker indices the user should double-check. */
   uncertain: number[]
+  /** Captures (by slot) that look wrong and should be retaken. */
+  suspects: number[]
   /** Where the current result came from, for the Check screen's back link. */
   source: 'scan' | 'upload' | null
   setFace: (slot: number, face: CapturedFace | null) => void
@@ -34,6 +36,7 @@ export const useScanStore = create<ScanState>()((set, get) => ({
   faces: Array(6).fill(null),
   sides: null,
   uncertain: [],
+  suspects: [],
   source: null,
   setFace: (slot, face) =>
     set((s) => {
@@ -41,13 +44,14 @@ export const useScanStore = create<ScanState>()((set, get) => ({
       faces[slot] = face
       return { faces }
     }),
-  reset: () => set({ faces: Array(6).fill(null), sides: null, uncertain: [], source: null }),
+  reset: () =>
+    set({ faces: Array(6).fill(null), sides: null, uncertain: [], suspects: [], source: null }),
   finish: (source) => {
     const { faces } = get()
     if (faces.some((f) => !f)) throw new Error('All 6 sides are needed')
     const result = reconstructCube(faces.map((f) => f!.rgbs))
     useCubeStore.getState().setAll(result.colors)
-    set({ source, sides: result.sides, uncertain: result.uncertain })
+    set({ source, sides: result.sides, uncertain: result.uncertain, suspects: result.suspects })
   },
   markChecked: (index) => set((s) => ({ uncertain: s.uncertain.filter((i) => i !== index) })),
 }))

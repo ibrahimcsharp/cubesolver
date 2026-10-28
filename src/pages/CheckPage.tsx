@@ -4,10 +4,11 @@ import { Link } from 'react-router'
 import { capitalize } from '@/components/cube/colors'
 import { StickerEditor } from '@/components/cube/StickerEditor'
 import { buttonVariants } from '@/components/ui/button-variants'
+import { cn } from '@/lib/utils'
 import { useScanStore } from '@/store/scanStore'
 
 export function CheckPage() {
-  const { faces, sides, uncertain, source, markChecked } = useScanStore()
+  const { faces, sides, uncertain, suspects, source, markChecked } = useScanStore()
   const toCheck = useMemo(() => new Set(uncertain), [uncertain])
 
   if (!source) {
@@ -49,6 +50,26 @@ export function CheckPage() {
         </p>
       </header>
 
+      {suspects.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-4 text-sm"
+        >
+          <p className="font-medium">
+            The photo of the {suspects.map((k) => sides?.[k] ?? `side ${k + 1}`).join(' and ')} side
+            {suspects.length > 1 ? 's' : ''} looks wrong.
+          </p>
+          <p className="text-muted-foreground mt-1">
+            It may be blurry, not the whole side, or not lined up with the box (outlined in red
+            below). The easiest fix is to{' '}
+            <Link to={source === 'scan' ? '/scan' : '/upload'} className="underline">
+              {source === 'scan' ? 'scan again' : 'change that photo'}
+            </Link>
+            , holding that side still and close to the camera. Or fix the outlined stickers here.
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <StickerEditor
           toCheck={toCheck}
@@ -76,7 +97,10 @@ export function CheckPage() {
                     <img
                       src={face.thumbnail}
                       alt={side ? `Photo of the ${side} side` : `Photo ${i + 1}`}
-                      className="aspect-square w-full rounded-md object-cover"
+                      className={cn(
+                        'aspect-square w-full rounded-md object-cover',
+                        suspects.includes(i) && 'ring-4 ring-red-500',
+                      )}
                     />
                   ) : (
                     <div className="bg-muted aspect-square rounded-md" />

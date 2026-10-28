@@ -16,7 +16,7 @@ import type { Box, Pixels } from './sample'
 
 type Integral = { w: number; h: number; sums: Float64Array[] }
 
-const WORK_SIZE = 160
+const WORK_SIZE = 128
 
 export function downscale(img: Pixels): { px: Pixels; scale: number } {
   const scale = Math.min(1, WORK_SIZE / Math.max(img.width, img.height))
@@ -126,8 +126,10 @@ export function score(I: Integral, x: number, y: number, s: number): number {
   const lineBright = strips.reduce((a, b) => a + b, 0) / strips.length
   const worstLine = Math.max(...strips)
 
-  const gap = (cellBright - (lineBright + worstLine) / 2) / 255
-  return gap * 2 - unevenness / 32
+  // Judged relative to the picture's brightness, so dim pictures score like bright ones.
+  const level = Math.max(30, cellBright)
+  const gap = (cellBright - (lineBright + worstLine) / 2) / level
+  return gap * 2 - (unevenness / level) * 3
 }
 
 export type FoundFace = { box: Box; score: number }
@@ -147,8 +149,8 @@ export function findFaceBox(img: Pixels): FoundFace | null {
 
   // 1. Coarse search; keep the best few that are not near each other.
   const coarse: Cand[] = []
-  for (let s = minSide * 0.25; s <= minSide * 0.98; s *= 1.05) {
-    const step = Math.max(1, s / 20)
+  for (let s = minSide * 0.25; s <= minSide * 0.98; s *= 1.06) {
+    const step = Math.max(1, s / 16)
     for (let y = 0; y + s <= px.height; y += step)
       for (let x = 0; x + s <= px.width; x += step)
         coarse.push({ x, y, s, score: score(I, x, y, s) })
@@ -160,7 +162,7 @@ export function findFaceBox(img: Pixels): FoundFace | null {
       (o) => Math.hypot(o.x + o.s / 2 - c.x - c.s / 2, o.y + o.s / 2 - c.y - c.s / 2) < o.s * 0.25,
     )
     if (!near) seeds.push(c)
-    if (seeds.length === 8) break
+    if (seeds.length === 6) break
   }
 
   // 2. Fine search around each seed; keep the overall best.

@@ -38,6 +38,12 @@ export type FaceSample = {
   tooDark: boolean
   /** Readable, but more light would help. */
   dim: boolean
+  /**
+   * How much darker the lines between the stickers are than the stickers
+   * (0 = not darker, 1 = black). A real cube has dark gaps; a wall or shirt
+   * doesn't.
+   */
+  gridContrast: number
 }
 
 /** Box of the given share of the shorter side, centered in the image. */
@@ -125,6 +131,51 @@ function sampleCell(img: Pixels, x0: number, y0: number, cell: number): StickerS
   return { rgb: avg, lab: rgbToLab(avg), evenness, spread, halfDiff, glare: glare / pixels.length }
 }
 
+/** Average brightness of a thin strip (a line between stickers). */
+function stripBrightness(img: Pixels, x0: number, y0: number, x1: number, y1: number): number {
+  const xs = Math.max(0, Math.floor(Math.min(x0, x1)))
+  const xe = Math.min(img.width - 1, Math.ceil(Math.max(x0, x1)))
+  const ys = Math.max(0, Math.floor(Math.min(y0, y1)))
+  const ye = Math.min(img.height - 1, Math.ceil(Math.max(y0, y1)))
+  const stepX = Math.max(1, Math.floor((xe - xs) / 40))
+  const stepY = Math.max(1, Math.floor((ye - ys) / 40))
+  let sum = 0
+  let n = 0
+  for (let y = ys; y <= ye; y += stepY)
+    for (let x = xs; x <= xe; x += stepX) {
+      const i = (y * img.width + x) * 4
+      sum += (img.data[i]! + img.data[i + 1]! + img.data[i + 2]!) / 3
+      n++
+    }
+  return n ? sum / n : 255
+}
+
+/**
+ * How much darker the 4 lines between the stickers are than the stickers.
+ * Each line is looked for a little either side of where it should be, so a
+ * cube that isn't perfectly lined up still counts.
+ */
+function gridContrast(img: Pixels, box: Box, cellBrightness: number): number {
+  const cell = box.size / 3
+  const half = Math.max(1, cell * 0.03)
+  // Leave the outer ends of each line out (they can touch the background).
+  const a = cell * 0.25
+  const b = box.size - cell * 0.25
+  let lines = 0
+  for (const k of [1, 2]) {
+    let darkestV = 255
+    let darkestH = 255
+    for (let off = -0.12; off <= 0.12001; off += 0.04) {
+      const x = box.x + (k + off) * cell
+      const y = box.y + (k + off) * cell
+      darkestV = Math.min(darkestV, stripBrightness(img, x - half, box.y + a, x + half, box.y + b))
+      darkestH = Math.min(darkestH, stripBrightness(img, box.x + a, y - half, box.x + b, y + half))
+    }
+    lines += darkestV + darkestH
+  }
+  return Math.max(0, 1 - lines / 4 / Math.max(1, cellBrightness))
+}
+
 /** Samples the 3x3 grid of stickers inside `box`, row by row, as seen in the image. */
 export function sampleFace(img: Pixels, box: Box): FaceSample {
   const cell = box.size / 3
@@ -147,9 +198,12 @@ export function sampleFace(img: Pixels, box: Box): FaceSample {
   const typical = spreads[4]!
   // Averaging half an area cancels most grain, so a clear difference between
   // its halves means it spans two stickers.
+  // A real cube has dark lines between its stickers; walls and clothes don't.
+  const grid = gridContrast(img, box, brightness)
   const looksLikeFace =
     !tooDark &&
+    grid > 0.2 &&
     typical < 30 &&
     stickers.every((s) => s.spread < Math.max(18, typical * 1.8) && s.halfDiff < 9)
-  return { stickers, brightness, looksLikeFace, glare, tooDark, dim }
+  return { stickers, brightness, looksLikeFace, glare, tooDark, dim, gridContrast: grid }
 }
