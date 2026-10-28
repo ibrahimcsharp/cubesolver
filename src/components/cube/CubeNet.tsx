@@ -22,14 +22,20 @@ const GRID_POS: Record<Face, { col: number; row: number }> = {
 
 const CENTERS = new Set(Object.values(CENTER_FACELETS))
 
+const HIGHLIGHT_CLASS = {
+  error: 'animate-pulse ring-2 ring-fuchsia-500 ring-offset-1 ring-offset-neutral-900',
+  check: 'ring-[3px] ring-amber-400 ring-offset-1 ring-offset-neutral-900',
+  focus: 'ring-2 ring-sky-400 ring-offset-1 ring-offset-neutral-900',
+} as const
+
 type Props = {
   /** 54 sticker colors (null = not set yet) in U R F D L B order. */
   stickers: readonly (StickerColor | null)[]
   /** Optional label per face, e.g. "Top". */
   faceLabels?: Partial<Record<Face, string>>
   highlight?: ReadonlySet<number>
-  /** "error" pulses (problem stickers); "focus" marks the layer to turn. */
-  highlightTone?: 'error' | 'focus'
+  /** "error" pulses (problem stickers); "check" = please double-check; "focus" = face to turn. */
+  highlightTone?: keyof typeof HIGHLIGHT_CLASS
   onStickerClick?: (index: number) => void
   /** Called while dragging across stickers with the mouse held down. */
   onStickerDrag?: (index: number) => void
@@ -75,10 +81,7 @@ export function CubeNet({
                 const locked = lockCenters && CENTERS.has(index)
                 const common = cn(
                   'aspect-square rounded-[3px] sm:rounded-sm',
-                  highlight?.has(index) &&
-                    (highlightTone === 'error'
-                      ? 'animate-pulse ring-2 ring-fuchsia-500 ring-offset-1 ring-offset-neutral-900'
-                      : 'ring-2 ring-sky-400 ring-offset-1 ring-offset-neutral-900'),
+                  highlight?.has(index) && HIGHLIGHT_CLASS[highlightTone],
                   color === null && 'border border-dashed border-neutral-500',
                 )
                 const style = { background: color ? STICKER_FILL[color] : EMPTY_FILL }

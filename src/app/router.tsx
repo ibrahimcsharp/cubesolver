@@ -4,7 +4,10 @@ import { Layout } from '@/app/Layout'
 import { HomePage } from '@/pages/HomePage'
 import { ManualPage } from '@/pages/ManualPage'
 import { NotationPage } from '@/pages/NotationPage'
-import { CheckPage, NotFoundPage, ScanPage, UploadPage } from '@/pages/placeholders'
+import { CheckPage } from '@/pages/CheckPage'
+import { NotFoundPage } from '@/pages/placeholders'
+import { ScanPage } from '@/pages/ScanPage'
+import { UploadPage } from '@/pages/UploadPage'
 import { SolutionPage } from '@/pages/SolutionPage'
 
 export const routes: RouteObject[] = [

@@ -1,5 +1,5 @@
 # Camera
 
-Webcam access, camera selection and frame capture (getUserMedia).
+`useCamera.ts`: webcam access (start/stop, camera choice, plain-English errors) and `grabFrame` to copy a video frame into pixels. The camera is always released when leaving the page.
 
-**Built in:** Phase 3
+**Built in:** Phase 3 (done)

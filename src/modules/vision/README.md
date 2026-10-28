@@ -1,5 +1,11 @@
 # Vision
 
-Finds the cube face, samples the 9 stickers, sorts colors (LAB/HSV, 9 per color) and detects when the image is still. Runs in a Web Worker with OpenCV.js.
+Reads sticker colors from camera frames and photos. Plain pixel math on RGBA arrays (no OpenCV yet), so it runs the same in the browser, a Web Worker, and tests.
 
-**Built in:** Phase 3 (photos), Phase 5 (video), Phase 6 (live checks)
+- `sample.ts`: samples the 9 stickers inside a box (middle of each cell, ignores glare and shadows) and flags glare, darkness and "doesn't look like a face".
+- `classify.ts`: turns 54 samples into 6 colors. It corrects each photo's brightness and tint, uses the 9-per-color rule (Hungarian method) and gives each sticker a confidence score.
+- `faceMapping.ts`: which cube sticker each image cell is, for each scan step.
+- `gridFinder.ts`: PROTOTYPE that finds a cube face anywhere in a photo. Used to place the crop box on uploads; Phase 5 builds automatic capture on it.
+- `synthetic.ts`: draws fake cube photos for tests. Results are in `docs/benchmarks/vision.md`.
+
+**Built in:** Phase 3 (photos, done), Phase 5 (video), Phase 6 (live checks)
