@@ -288,7 +288,8 @@ export function ScanPage() {
               {live && (
                 <div
                   className={cn(
-                    'absolute grid grid-cols-3 grid-rows-3 rounded-lg border-4 transition-colors',
+                    // Glide to the cube's position instead of jumping there.
+                    'absolute grid grid-cols-3 grid-rows-3 rounded-lg border-4 transition-[left,top,width,height,border-color] duration-200 ease-out',
                     ready ? 'border-green-400' : 'border-amber-400',
                     flash && 'bg-white/60',
                   )}
@@ -302,10 +303,13 @@ export function ScanPage() {
                 >
                   {live.guesses.map((g, i) => (
                     <div key={i} className="flex items-end justify-end border border-white/25 p-1">
-                      <span
-                        className="size-3 rounded-sm border border-black/40 sm:size-4"
-                        style={{ background: STICKER_FILL[g] }}
-                      />
+                      {/* Color dots only when a cube side is in view (no flicker otherwise). */}
+                      {live.sample.looksLikeFace && (
+                        <span
+                          className="size-3 rounded-sm border border-black/40 sm:size-4"
+                          style={{ background: STICKER_FILL[g] }}
+                        />
+                      )}
                     </div>
                   ))}
                   {progress > 0 && (
@@ -387,6 +391,15 @@ export function ScanPage() {
                   value={controls.brightness.value}
                   onChange={(e) => setBrightness(Number(e.target.value))}
                 />
+                {controls.brightness.value !== controls.brightness.initial && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setBrightness(controls.brightness!.initial)}
+                  >
+                    Reset
+                  </Button>
+                )}
               </label>
             )}
             {devices.length > 1 && (

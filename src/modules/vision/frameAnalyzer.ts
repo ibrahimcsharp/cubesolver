@@ -50,12 +50,20 @@ export function createFrameAnalyzer() {
           how = 'found'
         }
       }
-      box ??= centeredBox(img.width, img.height, 0.6)
-
-      const sample = sampleFace(img, box)
-      // Keep following only something that really looks like a cube side.
-      last = how !== 'middle' && sample.looksLikeFace ? box : null
-      return { box, how, sample }
+      if (box) {
+        // Only use (and keep following) a spot that really looks like a cube
+        // side. The search always returns its best guess, and with no cube in
+        // view that's a random spot (a face, a chair); jumping there would make
+        // the box flicker around the picture.
+        const sample = sampleFace(img, box)
+        if (sample.looksLikeFace) {
+          last = box
+          return { box, how, sample }
+        }
+      }
+      last = null
+      const middle = centeredBox(img.width, img.height, 0.6)
+      return { box: middle, how: 'middle', sample: sampleFace(img, middle) }
     },
   }
 }

@@ -7,7 +7,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 export type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
 
 /** A camera setting the user can change, if this camera supports it. */
-export type RangeControl = { min: number; max: number; step: number; value: number }
+export type RangeControl = {
+  min: number
+  max: number
+  step: number
+  value: number
+  /** The camera's own setting when it started, for "Reset". */
+  initial: number
+}
 
 /** Extra controls some cameras offer (most laptop webcams offer brightness; phones a torch). */
 export type CameraControls = {
@@ -63,10 +70,14 @@ async function setUpTrack(track: MediaStreamTrack): Promise<CameraControls> {
       min: range.min,
       max: range.max,
       step: range.step || (range.max - range.min) / 100,
-      value:
-        (name === 'exposureCompensation' ? settings.exposureCompensation : settings.brightness) ??
-        (range.min + range.max) / 2,
+      value: 0,
+      initial: 0,
     }
+    // Use what the camera reports, kept inside its range (some drivers report oddly).
+    const reported =
+      name === 'exposureCompensation' ? settings.exposureCompensation : settings.brightness
+    const start = Math.min(range.max, Math.max(range.min, reported ?? (range.min + range.max) / 2))
+    controls.brightness.value = controls.brightness.initial = start
   }
   if (caps.torch) controls.torch = !!settings.torch
   return controls
