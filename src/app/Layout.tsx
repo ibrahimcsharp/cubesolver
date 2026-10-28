@@ -1,5 +1,5 @@
 import { Box } from 'lucide-react'
-import { Link, NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet, ScrollRestoration } from 'react-router'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -35,6 +35,7 @@ export function Layout() {
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
         <Outlet />
+        <ScrollRestoration />
       </main>
       <footer className="text-muted-foreground border-t py-4 text-center text-xs">
         Your camera feed stays on your computer. Nothing is uploaded.

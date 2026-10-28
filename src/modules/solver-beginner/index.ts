@@ -298,13 +298,13 @@ class BeginnerSolver {
       if (topSticker === this.o.R) {
         this.b.moves(
           ALGORITHMS.middleRight,
-          `The edge's top color (${this.color(topSticker)}) matches the right center, so insert it to the right.`,
+          `The ${name} edge's top color (${this.color(topSticker)}) matches the right center, so insert it to the right.`,
           ALGORITHMS.middleRight,
         )
       } else {
         this.b.moves(
           ALGORITHMS.middleLeft,
-          `The edge's top color (${this.color(topSticker)}) matches the left center, so insert it to the left.`,
+          `The ${name} edge's top color (${this.color(topSticker)}) matches the left center, so insert it to the left.`,
           ALGORITHMS.middleLeft,
         )
       }

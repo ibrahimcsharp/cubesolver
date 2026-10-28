@@ -1,19 +1,16 @@
 import { createBrowserRouter, type RouteObject } from 'react-router'
+import { ErrorPage } from '@/app/ErrorPage'
 import { Layout } from '@/app/Layout'
 import { HomePage } from '@/pages/HomePage'
-import {
-  CheckPage,
-  ManualPage,
-  NotationPage,
-  NotFoundPage,
-  ScanPage,
-  SolutionPage,
-  UploadPage,
-} from '@/pages/placeholders'
+import { ManualPage } from '@/pages/ManualPage'
+import { NotationPage } from '@/pages/NotationPage'
+import { CheckPage, NotFoundPage, ScanPage, UploadPage } from '@/pages/placeholders'
+import { SolutionPage } from '@/pages/SolutionPage'
 
 export const routes: RouteObject[] = [
   {
     element: <Layout />,
+    errorElement: <ErrorPage />,
     children: [
       { path: '/', element: <HomePage /> },
       { path: '/scan', element: <ScanPage /> },

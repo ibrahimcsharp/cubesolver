@@ -19,6 +19,7 @@
   --sticker-blue: #0046ad;
   --sticker-red: #b71234;
   --sticker-orange: #ff5800;
+  --sticker-empty: #3f3f46;
 }
 
 /* Dark theme colors */
@@ -53,6 +54,7 @@
   --color-sticker-blue: var(--sticker-blue);
   --color-sticker-red: var(--sticker-red);
   --color-sticker-orange: var(--sticker-orange);
+  --color-sticker-empty: var(--sticker-empty);
 }
 
 @layer base {
