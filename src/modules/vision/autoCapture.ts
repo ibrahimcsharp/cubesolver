@@ -19,6 +19,7 @@ import {
   type Lab,
   type RGB,
 } from './color'
+import { rotateGridClockwise } from './faceMapping'
 import type { FaceSample } from './sample'
 
 export type AutoCaptureStatus =
@@ -35,6 +36,11 @@ export type AutoCaptureResult = {
   status: AutoCaptureStatus
   /** 0-1 while holding steady, for a progress ring. */
   progress: number
+  /**
+   * On 'capture': the 9 colors averaged over all the steady frames. Averaging
+   * cancels most camera grain, which matters a lot in low light.
+   */
+  rgbs?: RGB[]
 }
 
 export type AutoCaptureOptions = {
@@ -42,7 +48,7 @@ export type AutoCaptureOptions = {
   steadyMs: number
   /** Largest color change from the start of the still period that still counts as steady. */
   maxChange: number
-  /** Smallest average color change from the last capture to count as a new side. */
+  /** Smallest average color change from every captured side to count as a new side. */
   minChangeFromLast: number
 }
 
@@ -107,7 +113,10 @@ export class AutoCapture {
   private steadySince: number | null = null
   /** Colors at the start of the current still period. */
   private anchor: Lab[] | null = null
-  private lastCaptured: Lab[] | null = null
+  /** Every side captured so far (to avoid capturing one twice, however it's turned). */
+  private captured: Lab[][] = []
+  /** The frames of the current still period, averaged on capture. */
+  private steadyFrames: RGB[][] = []
   /** Middle stickers of captured sides (linear light), to learn the room light. */
   private centers: { color: StickerColor; seen: RGB }[] = []
   private readonly opts: AutoCaptureOptions
@@ -120,27 +129,39 @@ export class AutoCapture {
   reset(): void {
     this.steadySince = null
     this.anchor = null
-    this.lastCaptured = null
+    this.captured = []
+    this.steadyFrames = []
     this.centers = []
   }
 
   /** Forget one side (the user is retaking it). */
   forget(color: StickerColor): void {
     this.centers = this.centers.filter((c) => c.color !== color)
-    this.lastCaptured = null
+  }
+
+  /** Forget every captured side that looked like these colors (retake in any-order mode). */
+  forgetSide(rgbs: readonly RGB[]): void {
+    const labs = evenedOut(rgbs)
+    this.captured = this.captured.filter((c) => !sameSide(c, labs, 1))
+  }
+
+  /** True if these colors are a side already captured (in any of its 4 turns). */
+  private seenBefore(labs: Lab[]): boolean {
+    return this.captured.some((c) => sameSide(c, labs, this.opts.minChangeFromLast))
   }
 
   /**
    * @param sample the 9 stickers read from this frame
    * @param timeMs time of the frame
-   * @param expected the side this step needs facing the camera
+   * @param expected the side this step needs facing the camera. Leave out to
+   *   accept any side not captured yet (the cube is worked out afterwards).
    * @param alreadyScanned center colors of sides captured so far
    */
   push(
     sample: FaceSample,
     timeMs: number,
-    expected: StickerColor,
-    alreadyScanned: readonly StickerColor[],
+    expected?: StickerColor,
+    alreadyScanned: readonly StickerColor[] = [],
   ): AutoCaptureResult {
     const labs = sample.stickers.map((s) => s.lab)
 
@@ -154,6 +175,7 @@ export class AutoCapture {
     if (notReady) {
       this.steadySince = null
       this.anchor = null
+      this.steadyFrames = []
       return { status: notReady, progress: 0 }
     }
 
@@ -164,35 +186,71 @@ export class AutoCapture {
     if (change > this.opts.maxChange) {
       this.anchor = labs
       this.steadySince = timeMs
+      this.steadyFrames = [sample.stickers.map((s) => s.rgb)]
       return { status: 'moving', progress: 0 }
     }
     this.steadySince ??= timeMs
+    this.steadyFrames.push(sample.stickers.map((s) => s.rgb))
+    if (this.steadyFrames.length > 12) this.steadyFrames.shift()
 
-    const gains = learnedGains(this.centers)
-    const center = toLinear(sample.stickers[4]!.rgb).map(
-      (v, ch) => v * gains[ch]!,
-    ) as unknown as RGB
-    if (!centerMatches(linearToLab(center), expected, alreadyScanned)) {
-      return { status: 'wrong-side', progress: 0 }
+    if (expected) {
+      const gains = learnedGains(this.centers)
+      const center = toLinear(sample.stickers[4]!.rgb).map(
+        (v, ch) => v * gains[ch]!,
+      ) as unknown as RGB
+      if (!centerMatches(linearToLab(center), expected, alreadyScanned)) {
+        return { status: 'wrong-side', progress: 0 }
+      }
     }
-    if (this.lastCaptured) {
-      const last = this.lastCaptured
-      const avg = labs.reduce((s, l, i) => s + colorDistance(l, last[i]!), 0) / labs.length
-      if (avg < this.opts.minChangeFromLast) return { status: 'same-as-last', progress: 0 }
-    }
+    if (this.seenBefore(evenedOut(sample.stickers.map((s) => s.rgb))))
+      return { status: 'same-as-last', progress: 0 }
 
     const progress = Math.min(1, (timeMs - this.steadySince) / this.opts.steadyMs)
     if (progress < 1) return { status: 'steadying', progress }
 
-    this.lastCaptured = labs
-    this.centers = [
-      ...this.centers.filter((c) => c.color !== expected),
-      { color: expected, seen: toLinear(sample.stickers[4]!.rgb) },
-    ]
+    const frames = this.steadyFrames
+    const rgbs = Array.from(
+      { length: 9 },
+      (_, i) =>
+        [0, 1, 2].map(
+          (k) => frames.reduce((s, f) => s + f[i]![k]!, 0) / frames.length,
+        ) as unknown as RGB,
+    )
+    this.captured.push(evenedOut(rgbs))
+    if (expected) {
+      this.centers = [
+        ...this.centers.filter((c) => c.color !== expected),
+        { color: expected, seen: toLinear(sample.stickers[4]!.rgb) },
+      ]
+    }
     this.steadySince = null
     this.anchor = null
-    return { status: 'capture', progress: 1 }
+    this.steadyFrames = []
+    return { status: 'capture', progress: 1, rgbs }
   }
+}
+
+/**
+ * The 9 colors with the picture's brightness evened out, so a side captured in
+ * a dark moment and the same side in a brighter one compare as equal, and two
+ * different sides in a dark room still look different.
+ */
+function evenedOut(rgbs: readonly RGB[]): Lab[] {
+  const lin = rgbs.map(toLinear)
+  const mean = lin.reduce((s, c) => s + luminance(c), 0) / lin.length
+  const k = 0.25 / Math.max(1e-4, mean)
+  return lin.map((c) => linearToLab(c.map((v) => v * k) as unknown as RGB))
+}
+
+/** Average color difference of two sides, trying all 4 ways the second could be turned. */
+function sameSide(a: readonly Lab[], b: readonly Lab[], threshold: number): boolean {
+  let turned = [...b]
+  for (let t = 0; t < 4; t++) {
+    const avg = a.reduce((s, l, i) => s + colorDistance(l, turned[i]!), 0) / a.length
+    if (avg < threshold) return true
+    turned = rotateGridClockwise(turned)
+  }
+  return false
 }
 
 /** Plain-English hint for each status, shown under the camera view. */
@@ -202,7 +260,7 @@ export const AUTO_CAPTURE_HINT: Record<AutoCaptureStatus, string> = {
   glare: 'Glare on the stickers. Tilt the cube a little.',
   moving: 'Hold still…',
   'wrong-side': 'Show the side this step asks for.',
-  'same-as-last': 'Now turn to the next side.',
+  'same-as-last': 'Already have this side. Show another one.',
   steadying: 'Hold still…',
   capture: 'Got it!',
 }

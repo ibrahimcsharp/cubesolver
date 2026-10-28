@@ -6,14 +6,70 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
 
+/** A camera setting the user can change, if this camera supports it. */
+export type RangeControl = { min: number; max: number; step: number; value: number }
+
+/** Extra controls some cameras offer (most laptop webcams offer brightness; phones a torch). */
+export type CameraControls = {
+  brightness?: RangeControl & { name: 'brightness' | 'exposureCompensation' }
+  torch?: boolean
+}
+
 export type CameraState = {
   status: CameraStatus
   error: string | null
   devices: MediaDeviceInfo[]
   deviceId: string | null
   videoRef: React.RefObject<HTMLVideoElement | null>
+  controls: CameraControls
+  setBrightness: (value: number) => void
+  setTorch: (on: boolean) => void
   start: (deviceId?: string) => Promise<void>
   stop: () => void
+}
+
+// Not all browsers' type definitions know these camera settings yet.
+type ExtraCapabilities = MediaTrackCapabilities & {
+  brightness?: { min: number; max: number; step?: number }
+  exposureCompensation?: { min: number; max: number; step?: number }
+  exposureMode?: string[]
+  whiteBalanceMode?: string[]
+  torch?: boolean
+}
+type ExtraSettings = MediaTrackSettings & {
+  brightness?: number
+  exposureCompensation?: number
+  torch?: boolean
+}
+
+/** Reads which extra controls the camera has, and turns on automatic exposure/white balance. */
+async function setUpTrack(track: MediaStreamTrack): Promise<CameraControls> {
+  const caps = (track.getCapabilities?.() ?? {}) as ExtraCapabilities
+  const settings = track.getSettings() as ExtraSettings
+  const auto: Record<string, string> = {}
+  if (caps.exposureMode?.includes('continuous')) auto.exposureMode = 'continuous'
+  if (caps.whiteBalanceMode?.includes('continuous')) auto.whiteBalanceMode = 'continuous'
+  if (Object.keys(auto).length)
+    await track
+      .applyConstraints({ advanced: [auto as MediaTrackConstraintSet] })
+      .catch(() => undefined)
+
+  const controls: CameraControls = {}
+  const range = caps.exposureCompensation ?? caps.brightness
+  if (range && range.max > range.min) {
+    const name = caps.exposureCompensation ? 'exposureCompensation' : 'brightness'
+    controls.brightness = {
+      name,
+      min: range.min,
+      max: range.max,
+      step: range.step || (range.max - range.min) / 100,
+      value:
+        (name === 'exposureCompensation' ? settings.exposureCompensation : settings.brightness) ??
+        (range.min + range.max) / 2,
+    }
+  }
+  if (caps.torch) controls.torch = !!settings.torch
+  return controls
 }
 
 function explain(err: unknown): string {
@@ -40,6 +96,26 @@ export function useCamera(): CameraState {
   const [error, setError] = useState<string | null>(null)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState<string | null>(null)
+  const [controls, setControls] = useState<CameraControls>({})
+
+  const track = () => streamRef.current?.getVideoTracks()[0]
+  const setBrightness = useCallback((value: number) => {
+    setControls((c) => {
+      if (!c.brightness) return c
+      track()
+        ?.applyConstraints({
+          advanced: [{ [c.brightness.name]: value } as MediaTrackConstraintSet],
+        })
+        .catch(() => undefined)
+      return { ...c, brightness: { ...c.brightness, value } }
+    })
+  }, [])
+  const setTorch = useCallback((on: boolean) => {
+    track()
+      ?.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] })
+      .catch(() => undefined)
+    setControls((c) => ({ ...c, torch: on }))
+  }, [])
 
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -72,7 +148,9 @@ export function useCamera(): CameraState {
         video.srcObject = stream
         await video.play().catch(() => undefined)
       }
-      setDeviceId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? null)
+      const videoTrack = stream.getVideoTracks()[0]
+      setDeviceId(videoTrack?.getSettings().deviceId ?? null)
+      setControls(videoTrack ? await setUpTrack(videoTrack) : {})
       // Camera names are only available after permission is given.
       const all = await navigator.mediaDevices.enumerateDevices()
       setDevices(all.filter((d) => d.kind === 'videoinput'))
@@ -86,7 +164,18 @@ export function useCamera(): CameraState {
   // Always release the camera when leaving the page.
   useEffect(() => () => streamRef.current?.getTracks().forEach((t) => t.stop()), [])
 
-  return { status, error, devices, deviceId, videoRef, start, stop }
+  return {
+    status,
+    error,
+    devices,
+    deviceId,
+    videoRef,
+    controls,
+    setBrightness,
+    setTorch,
+    start,
+    stop,
+  }
 }
 
 /** Copies the current video frame into pixels (not mirrored). */

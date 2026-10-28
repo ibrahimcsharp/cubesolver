@@ -28,6 +28,10 @@ export type Lighting = {
   gradient: number
   /** Add a glare spot on one sticker. */
   glare: boolean
+  /** Camera grain (default 12). Webcams in low light turn up the gain, so this grows. */
+  noise?: number
+  /** Color strength, 1 = normal; low light washes colors out (e.g. 0.6). */
+  saturation?: number
 }
 
 export const LIGHTINGS: readonly Lighting[] = [
@@ -44,6 +48,40 @@ export const HARSH_LIGHTINGS: readonly Lighting[] = [
   { name: 'very warm', tint: [1.25, 0.95, 0.55], level: 0.8, gradient: 0.25, glare: false },
   { name: 'dark corner', tint: [1, 1, 1], level: 0.3, gradient: 0.4, glare: false },
   { name: 'warm + glare', tint: [1.18, 0.98, 0.65], level: 0.7, gradient: 0.35, glare: true },
+]
+
+/**
+ * Low light as a webcam really records it: it brightens the picture itself,
+ * so the image is grainy and colors are washed out, often with a warm tint.
+ */
+export const LOW_LIGHTINGS: readonly Lighting[] = [
+  {
+    name: 'evening room',
+    tint: [1.08, 1, 0.82],
+    level: 0.6,
+    gradient: 0.3,
+    glare: false,
+    noise: 26,
+    saturation: 0.7,
+  },
+  {
+    name: 'one dim lamp',
+    tint: [1.15, 1, 0.7],
+    level: 0.45,
+    gradient: 0.45,
+    glare: false,
+    noise: 32,
+    saturation: 0.6,
+  },
+  {
+    name: 'nearly dark',
+    tint: [1, 1, 1],
+    level: 0.3,
+    gradient: 0.3,
+    glare: false,
+    noise: 30,
+    saturation: 0.55,
+  },
 ]
 
 export type FaceImageOptions = {
@@ -117,9 +155,14 @@ export function makeFaceImage(o: FaceImageOptions): Pixels {
       }
       const light = lighting.level * (1 + lighting.gradient * (x / width - 0.5) * 2)
       const idx = (y * width + x) * 4
+      const isGlare = rgb[0] === 255 && rgb[1] === 255 && rgb[2] === 255
+      const sat = lighting.saturation ?? 1
+      const grey = (rgb[0]! + rgb[1]! + rgb[2]!) / 3
       for (let k = 0; k < 3; k++) {
-        const isGlare = rgb[0] === 255 && rgb[1] === 255 && rgb[2] === 255
-        data[idx + k] = isGlare ? 255 : clamp(rgb[k]! * lighting.tint[k]! * light + noise(12))
+        const v = grey + (rgb[k]! - grey) * sat
+        data[idx + k] = isGlare
+          ? 255
+          : clamp(v * lighting.tint[k]! * light + noise(lighting.noise ?? 12))
       }
       data[idx + 3] = 255
     }

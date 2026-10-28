@@ -10,15 +10,25 @@ import {
   centeredBox,
   findFaceBox,
   nearestNominal,
+  reconstructCube,
+  rgbToLab,
   sampleFace,
   type Box,
+  type RGB,
 } from '@/modules/vision'
 import { cn } from '@/lib/utils'
 import { useScanStore } from '@/store/scanStore'
 
 const MAX_SIDE = 800
 
-type Photo = { pixels: ImageData; url: string; box: Box; autoFound: boolean }
+type Photo = {
+  pixels: ImageData
+  url: string
+  box: Box
+  autoFound: boolean
+  /** From a video: colors averaged over the frames the side was held still. */
+  rgbs?: RGB[]
+}
 
 async function loadPhoto(file: File): Promise<Photo> {
   const bitmap = await createImageBitmap(file)
@@ -43,19 +53,40 @@ function withBox(pixels: ImageData, canvas: HTMLCanvasElement): Photo {
 }
 
 /** A video frame as a photo, with the box where the cube was found. */
-function photoFromFrame(frame: ImageData, box: Box): Photo {
+function photoFromFrame(frame: ImageData, box: Box, rgbs?: RGB[]): Photo {
   const canvas = document.createElement('canvas')
   canvas.width = frame.width
   canvas.height = frame.height
   canvas.getContext('2d')!.putImageData(frame, 0, 0)
-  return { pixels: frame, url: canvas.toDataURL('image/jpeg', 0.85), box, autoFound: true }
+  return { pixels: frame, url: canvas.toDataURL('image/jpeg', 0.85), box, autoFound: true, rgbs }
+}
+
+/**
+ * Puts sides found in a video into the matching color slots. With all 6, the
+ * full cube reading decides which is which; otherwise the middle color's best guess.
+ */
+function intoSlots(found: Photo[]): (Photo | null)[] {
+  const slots: (Photo | null)[] = Array(6).fill(null)
+  const colors =
+    found.length === 6
+      ? reconstructCube(found.map((f) => f.rgbs!)).sides
+      : found.map((f) => nearestNominal(rgbToLab(f.rgbs![4]!)))
+  const leftovers: Photo[] = []
+  found.forEach((photo, k) => {
+    const slot = SCAN_ORDER.findIndex((st) => st.front === colors[k])
+    if (slot >= 0 && !slots[slot]) slots[slot] = photo
+    else leftovers.push(photo)
+  })
+  for (const photo of leftovers) slots[slots.indexOf(null)] = photo
+  return slots
 }
 
 type VideoProgress = { progress: number; found: number }
 
 /**
  * Goes through the video and keeps one frame per side, using the same
- * automatic capture as the live webcam scan (steady, right side, new side).
+ * automatic capture as the live webcam scan: steady, and a side not seen yet
+ * (in any order, any way up).
  */
 async function sidesFromVideo(
   file: File,
@@ -63,26 +94,17 @@ async function sidesFromVideo(
   signal: AbortSignal,
 ): Promise<(Photo | null)[]> {
   const auto = new AutoCapture({ steadyMs: 500 })
-  const found: (Photo | null)[] = Array(6).fill(null)
-  let step = 0
+  const found: Photo[] = []
   for await (const { frame, timeMs, progress } of readVideoFrames(file, { signal })) {
-    if (step >= 6) break
+    if (found.length >= 6) break
     const box = findFaceBox(frame)?.box ?? centeredBox(frame.width, frame.height, 0.6)
-    const result = auto.push(
-      sampleFace(frame, box),
-      timeMs,
-      SCAN_ORDER[step]!.front,
-      SCAN_ORDER.slice(0, step).map((st) => st.front),
-    )
-    if (result.status === 'capture') {
-      found[step] = photoFromFrame(frame, box)
-      step++
-    }
-    onProgress({ progress, found: step })
+    const result = auto.push(sampleFace(frame, box), timeMs)
+    if (result.status === 'capture') found.push(photoFromFrame(frame, box, result.rgbs))
+    onProgress({ progress, found: found.length })
     // Let the page repaint between frames.
     await new Promise((r) => setTimeout(r, 0))
   }
-  return found
+  return intoSlots(found)
 }
 
 /** Turns the photo a quarter turn clockwise. */
@@ -137,11 +159,11 @@ export function UploadPage() {
       const found = await sidesFromVideo(file, setVideo, abort.signal)
       if (abort.signal.aborted) return
       setPhotos((all) => all.map((p, i) => found[i] ?? p))
-      const missing = SCAN_ORDER.filter((_, i) => !found[i]).map((st) => st.front)
+      const count = found.filter(Boolean).length
       setVideoResult(
-        missing.length === 0
+        count === 6
           ? 'Found all 6 sides in the video. Check the boxes below, then read your cube.'
-          : `Found ${6 - missing.length} of 6 sides. Missing: ${missing.join(', ')}. Add a photo for ${missing.length === 1 ? 'it' : 'them'} below, or try another video holding each side still for a second.`,
+          : `Found ${count} of 6 sides. Add a photo for each empty slot below, or try another video holding each side still for a second.`,
       )
     } catch (e) {
       setError(
@@ -155,7 +177,13 @@ export function UploadPage() {
   useEffect(() => reset(), [reset])
 
   const setPhoto = (i: number, p: Photo | null) =>
-    setPhotos((all) => all.map((x, k) => (k === i ? p : x)))
+    setPhotos((all) =>
+      all.map((x, k) => {
+        if (k !== i) return x
+        // Colors saved from a video no longer apply once the box is moved.
+        return p && x && p.rgbs && p.box !== x.box ? { ...p, rgbs: undefined } : p
+      }),
+    )
 
   /** Fills empty slots in order with the chosen files. */
   const addFiles = async (files: FileList | null, startAt?: number) => {
@@ -183,7 +211,7 @@ export function UploadPage() {
     photos.forEach((p, i) => {
       if (!p) return
       setFace(i, {
-        rgbs: sampleFace(p.pixels, p.box).stickers.map((s) => s.rgb),
+        rgbs: p.rgbs ?? sampleFace(p.pixels, p.box).stickers.map((s) => s.rgb),
         thumbnail: thumbnail(p),
       })
     })
@@ -199,10 +227,10 @@ export function UploadPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Upload photos or a video</h1>
           <p className="text-muted-foreground max-w-2xl text-sm">
-            Take one photo of each side, straight on, with the side shown on top at the top of the
-            picture. Take all 6 in the same place and light. Or record one short video turning the
-            cube through the 6 sides in this order, holding each still for a second. We find the
-            cube for you; drag the box or change its size if it's off. Nothing leaves this computer.
+            Take one photo of each side, straight on, all in the same place and light. Any order and
+            any way up is fine: the app works out which side is which. Or record one short video
+            showing the 6 sides, holding each still for a second. We find the cube for you; drag the
+            box or change its size if it's off. Nothing leaves this computer.
           </p>
         </div>
         <div className="flex gap-2">
@@ -395,7 +423,7 @@ function PhotoSlot({
               onPointerUp={() => (drag.current = null)}
               className={cn(
                 'absolute grid cursor-move touch-none grid-cols-3 grid-rows-3 border-[3px]',
-                wrongSide ? 'border-amber-400' : 'border-green-400',
+                'border-green-400',
               )}
               style={{
                 left: `${(photo.box.x / photo.pixels.width) * 100}%`,
@@ -435,12 +463,11 @@ function PhotoSlot({
             />
           </label>
 
-          <p className={cn('text-xs', wrongSide ? 'text-amber-500' : 'text-muted-foreground')}>
-            {wrongSide
-              ? `The middle looks ${guesses[4]}, but this should be the ${step.front} side. Check the photo or move the box.`
-              : photo.autoFound
-                ? 'Cube found. Move the box if it is not lined up with the stickers.'
-                : "We couldn't find the cube. Drag the box over the 9 stickers."}
+          <p className="text-muted-foreground text-xs">
+            {photo.autoFound
+              ? 'Cube found. Move the box if it is not lined up with the stickers.'
+              : "We couldn't find the cube. Drag the box over the 9 stickers."}
+            {wrongSide && ` (Looks like the ${guesses[4]} side; that's fine, any slot works.)`}
           </p>
 
           <div className="flex gap-2">

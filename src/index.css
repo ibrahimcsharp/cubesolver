@@ -37,6 +37,22 @@
   }
 }
 
+/*
+ * "Screen light" while scanning: a bright white page lights the cube from the
+ * front in a dark room. Overrides the dark theme while it's on.
+ */
+:root[data-screen-light] {
+  --background: #ffffff;
+  --foreground: oklch(0.2 0.02 260);
+  --card: #ffffff;
+  --muted: oklch(0.96 0.004 250);
+  --muted-foreground: oklch(0.45 0.02 260);
+  --border: oklch(0.9 0.006 250);
+  --primary: oklch(0.55 0.17 145);
+  --primary-foreground: oklch(0.99 0 0);
+  --ring: oklch(0.55 0.17 145);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

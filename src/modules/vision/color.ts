@@ -18,6 +18,14 @@ export function toLinear([r, g, b]: RGB): RGB {
   return [linear(r), linear(g), linear(b)]
 }
 
+/** Linear light (0-1) back to sRGB (0-255). */
+export function fromLinear(lin: RGB): RGB {
+  return lin.map((v) => {
+    const x = Math.max(0, Math.min(1, v))
+    return 255 * (x <= 0.0031308 ? x * 12.92 : 1.055 * x ** (1 / 2.4) - 0.055)
+  }) as unknown as RGB
+}
+
 /** Brightness (relative luminance) of a linear color. */
 export function luminance([R, G, B]: RGB): number {
   return 0.2126 * R + 0.7152 * G + 0.0722 * B

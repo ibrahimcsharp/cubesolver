@@ -31,31 +31,30 @@ export type ScanStep = {
   instruction: string
 }
 
-/** The 6-step scan order shown to the user (PLAN.md section 4.3). */
+/**
+ * The suggested scan order (PLAN.md section 4.3). It is only a suggestion:
+ * the app works out which side each capture is and which way up it was held.
+ * `top` is the side we suggest keeping on top for each step.
+ */
 export const SCAN_ORDER: readonly ScanStep[] = [
   { front: 'green', top: 'white', instruction: 'Hold green toward the camera, white on top.' },
   {
     front: 'red',
     top: 'white',
-    instruction: 'Turn the whole cube to the LEFT once (red now faces you). Keep white on top.',
+    instruction: 'Show the red side to the camera, white still on top.',
   },
-  { front: 'blue', top: 'white', instruction: 'Turn the whole cube LEFT again (blue faces you).' },
+  {
+    front: 'blue',
+    top: 'white',
+    instruction: 'Show the blue side to the camera, white still on top.',
+  },
   {
     front: 'orange',
     top: 'white',
-    instruction: 'Turn the whole cube LEFT again (orange faces you).',
+    instruction: 'Show the orange side to the camera, white still on top.',
   },
-  {
-    front: 'white',
-    top: 'blue',
-    instruction:
-      'Turn LEFT once more to bring green back to the front. Now tip the top of the cube TOWARD you so white faces the camera.',
-  },
-  {
-    front: 'yellow',
-    top: 'green',
-    instruction: 'Tip it back, then tip the top AWAY from you so yellow faces the camera.',
-  },
+  { front: 'white', top: 'blue', instruction: 'Show the white side to the camera.' },
+  { front: 'yellow', top: 'green', instruction: 'Last one: show the yellow side to the camera.' },
 ]
 
 /** A solved cube as a facelet string: "UUUUUUUUURRRRRRRRR...". */

@@ -4,11 +4,10 @@ import { Link } from 'react-router'
 import { capitalize } from '@/components/cube/colors'
 import { StickerEditor } from '@/components/cube/StickerEditor'
 import { buttonVariants } from '@/components/ui/button-variants'
-import { SCAN_ORDER } from '@/modules/cube'
 import { useScanStore } from '@/store/scanStore'
 
 export function CheckPage() {
-  const { faces, uncertain, source, markChecked } = useScanStore()
+  const { faces, sides, uncertain, source, markChecked } = useScanStore()
   const toCheck = useMemo(() => new Set(uncertain), [uncertain])
 
   if (!source) {
@@ -69,26 +68,29 @@ export function CheckPage() {
         <aside className="bg-card h-fit space-y-3 rounded-xl border p-5 text-sm">
           <h2 className="font-semibold">What the camera saw</h2>
           <div className="grid grid-cols-3 gap-2">
-            {SCAN_ORDER.map((s, i) => (
-              <figure key={s.front} className="space-y-1">
-                {faces[i] ? (
-                  <img
-                    src={faces[i]!.thumbnail}
-                    alt={`Photo of the ${s.front} side`}
-                    className="aspect-square w-full rounded-md object-cover"
-                  />
-                ) : (
-                  <div className="bg-muted aspect-square rounded-md" />
-                )}
-                <figcaption className="text-muted-foreground text-center text-xs">
-                  {capitalize(s.front)}
-                </figcaption>
-              </figure>
-            ))}
+            {faces.map((face, i) => {
+              const side = sides?.[i]
+              return (
+                <figure key={i} className="space-y-1">
+                  {face ? (
+                    <img
+                      src={face.thumbnail}
+                      alt={side ? `Photo of the ${side} side` : `Photo ${i + 1}`}
+                      className="aspect-square w-full rounded-md object-cover"
+                    />
+                  ) : (
+                    <div className="bg-muted aspect-square rounded-md" />
+                  )}
+                  <figcaption className="text-muted-foreground text-center text-xs">
+                    {side ? capitalize(side) : `Side ${i + 1}`}
+                  </figcaption>
+                </figure>
+              )
+            })}
           </div>
           <p className="text-muted-foreground text-xs">
-            These show each side as the camera saw it, with {SCAN_ORDER[0]!.top} on top for the four
-            sides.
+            Each side as the camera saw it, named by its middle color. The app worked out which way
+            up each one was held.
           </p>
         </aside>
       </div>

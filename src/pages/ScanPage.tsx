@@ -1,4 +1,13 @@
-import { Camera, CameraOff, Check, Lightbulb, RotateCcw, Upload } from 'lucide-react'
+import {
+  Camera,
+  CameraOff,
+  Check,
+  Flashlight,
+  Lightbulb,
+  RotateCcw,
+  Sun,
+  Upload,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { capitalize, STICKER_FILL } from '@/components/cube/colors'
@@ -12,9 +21,11 @@ import {
   AutoCapture,
   centeredBox,
   nearestNominal,
+  rgbToLab,
   sampleFace,
   type AutoCaptureResult,
   type FaceSample,
+  type RGB,
 } from '@/modules/vision'
 import { playCaptureSound } from '@/lib/sound'
 import { cn } from '@/lib/utils'
@@ -22,6 +33,8 @@ import { useScanStore } from '@/store/scanStore'
 
 const BOX_SHARE = 0.6
 const FRAME_INTERVAL_MS = 100
+/** Frames averaged for a manual capture (cancels camera grain in low light). */
+const MANUAL_FRAMES = 6
 
 type Live = {
   sample: FaceSample
@@ -32,6 +45,17 @@ type Live = {
   box: { left: number; top: number; size: number; sizeY: number }
 }
 
+/** Average of several frames' 9 colors. */
+function averageFrames(frames: readonly RGB[][]): RGB[] {
+  return Array.from(
+    { length: 9 },
+    (_, i) =>
+      [0, 1, 2].map(
+        (k) => frames.reduce((s, f) => s + f[i]![k]!, 0) / frames.length,
+      ) as unknown as RGB,
+  )
+}
+
 export function ScanPage() {
   const navigate = useNavigate()
   const {
@@ -40,6 +64,9 @@ export function ScanPage() {
     devices,
     deviceId,
     videoRef,
+    controls,
+    setBrightness,
+    setTorch,
     start: startCamera,
     stop: stopCamera,
   } = useCamera()
@@ -48,19 +75,25 @@ export function ScanPage() {
   const [aspect, setAspect] = useState(16 / 9)
   const [flash, setFlash] = useState(false)
   const [autoOn, setAutoOn] = useState(true)
+  const [screenLight, setScreenLight] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const latest = useRef<{ live: Live; frame: ImageData } | null>(null)
+  const recent = useRef<RGB[][]>([])
   const autoRef = useRef<AutoCapture | null>(null)
   // The frame loop runs outside React, so it reads the latest values from refs.
-  const stateRef = useRef({ step: 0, allDone: false, autoOn: true, scanned: [] as StickerColor[] })
-  const captureRef = useRef<() => void>(() => undefined)
+  const stateRef = useRef({ allDone: false, autoOn: true })
+  const captureRef = useRef<(rgbs?: RGB[]) => void>(() => undefined)
 
-  const step = Math.max(
+  const slot = Math.max(
     0,
     faces.findIndex((f) => f === null),
   )
-  const allDone = faces.every((f) => f !== null)
-  const current = SCAN_ORDER[allDone ? 5 : step]!
+  const count = faces.filter(Boolean).length
+  const allDone = count === 6
+
+  // Suggest a side not shown yet (only a suggestion: any order works).
+  const shownColors = faces.flatMap((f) => (f ? [nearestNominal(rgbToLab(f.rgbs[4]!))] : []))
+  const suggestion = SCAN_ORDER.find((s) => !shownColors.includes(s.front)) ?? SCAN_ORDER[count]!
 
   // Start fresh each time the page opens.
   useEffect(() => {
@@ -69,13 +102,16 @@ export function ScanPage() {
   }, [reset])
 
   useEffect(() => {
-    stateRef.current = {
-      step,
-      allDone,
-      autoOn,
-      scanned: SCAN_ORDER.filter((_, i) => faces[i]).map((s) => s.front),
-    }
-  }, [step, allDone, autoOn, faces])
+    stateRef.current = { allDone, autoOn }
+  }, [allDone, autoOn])
+
+  // Screen light: a bright white page lights the cube from the front.
+  useEffect(() => {
+    const root = document.documentElement
+    if (screenLight) root.setAttribute('data-screen-light', '')
+    else root.removeAttribute('data-screen-light')
+    return () => root.removeAttribute('data-screen-light')
+  }, [screenLight])
 
   // Read the guide box about 10 times a second.
   useEffect(() => {
@@ -94,11 +130,11 @@ export function ScanPage() {
       setAspect(frame.width / frame.height)
       const box = centeredBox(frame.width, frame.height, BOX_SHARE)
       const sample = sampleFace(frame, box)
+      recent.current = [...recent.current, sample.stickers.map((s) => s.rgb)].slice(-MANUAL_FRAMES)
       const st = stateRef.current
+      // Any side not captured yet is accepted; the cube is worked out at the end.
       const auto =
-        st.autoOn && !st.allDone && autoRef.current
-          ? autoRef.current.push(sample, t, SCAN_ORDER[st.step]!.front, st.scanned)
-          : null
+        st.autoOn && !st.allDone && autoRef.current ? autoRef.current.push(sample, t) : null
       const next: Live = {
         sample,
         auto,
@@ -112,34 +148,39 @@ export function ScanPage() {
       }
       latest.current = { live: next, frame }
       setLive(next)
-      if (auto?.status === 'capture') captureRef.current()
+      if (auto?.status === 'capture') captureRef.current(auto.rgbs)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [camStatus, videoRef])
 
-  const capture = useCallback(() => {
-    const got = latest.current
-    if (!got || allDone) return
-    const { frame, live: l } = got
-    const box = centeredBox(frame.width, frame.height, BOX_SHARE)
-    setFace(step, {
-      rgbs: l.sample.stickers.map((s) => s.rgb),
-      // Small picture of the face as the camera sees it (from outside the cube).
-      thumbnail: faceThumbnail(frame, box),
-    })
-    playCaptureSound()
-    navigator.vibrate?.(40)
-    setFlash(true)
-    window.setTimeout(() => setFlash(false), 250)
-  }, [allDone, setFace, step])
+  /** Saves a side: the averaged colors from auto-capture, or the last few frames averaged. */
+  const capture = useCallback(
+    (rgbs?: RGB[]) => {
+      const got = latest.current
+      if (!got || allDone) return
+      const { frame } = got
+      const box = centeredBox(frame.width, frame.height, BOX_SHARE)
+      setFace(slot, {
+        rgbs: rgbs ?? averageFrames(recent.current),
+        // Small picture of the face as the camera sees it (from outside the cube).
+        thumbnail: faceThumbnail(frame, box),
+      })
+      playCaptureSound()
+      navigator.vibrate?.(40)
+      setFlash(true)
+      window.setTimeout(() => setFlash(false), 250)
+    },
+    [allDone, setFace, slot],
+  )
 
   useEffect(() => {
     captureRef.current = capture
   }, [capture])
 
   const retake = (i: number) => {
-    autoRef.current?.forget(SCAN_ORDER[i]!.front)
+    const face = faces[i]
+    if (face) autoRef.current?.forgetSide(face.rgbs)
     setFace(i, null)
   }
 
@@ -161,11 +202,7 @@ export function ScanPage() {
     navigate('/check')
   }
 
-  const centerGuess = live?.guesses[4]
   const autoStatus = autoOn ? live?.auto?.status : undefined
-  const wrongSide = autoOn
-    ? autoStatus === 'wrong-side'
-    : !!live?.sample.looksLikeFace && centerGuess !== current.front
   const ready = !!live?.sample.looksLikeFace && !live.sample.glare && !live.sample.tooDark
   const progress = autoOn ? (live?.auto?.progress ?? 0) : 0
 
@@ -174,15 +211,18 @@ export function ScanPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Scan your cube</h1>
         <p className="text-muted-foreground text-sm">
-          Show each of the 6 sides to your webcam, in the order shown. Your camera feed stays on
-          this computer.
+          Show each of the 6 sides to your webcam. Any order and any way up is fine; the app works
+          out which side is which. Your camera feed stays on this computer.
         </p>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <section className="space-y-3">
           <div
-            className="relative overflow-hidden rounded-xl border bg-black"
+            className={cn(
+              'relative overflow-hidden rounded-xl border bg-black',
+              screenLight && 'ring-[24px] ring-white',
+            )}
             style={{ aspectRatio: String(aspect) }}
           >
             {/* Mirrored like a mirror, so moving the cube feels natural. */}
@@ -264,27 +304,62 @@ export function ScanPage() {
             )}
           </div>
 
-          {devices.length > 1 && (
-            <label className="flex items-center gap-2 text-sm">
-              Camera:
-              <select
-                className="bg-card rounded-md border px-2 py-1"
-                value={deviceId ?? ''}
-                onChange={(e) => startCamera(e.target.value)}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+            <Button
+              variant={screenLight ? 'primary' : 'outline'}
+              size="sm"
+              onClick={() => setScreenLight((on) => !on)}
+              aria-pressed={screenLight}
+            >
+              <Sun className="size-4" aria-hidden />
+              Screen light {screenLight ? 'on' : 'off'}
+            </Button>
+            {controls.torch !== undefined && (
+              <Button
+                variant={controls.torch ? 'primary' : 'outline'}
+                size="sm"
+                onClick={() => setTorch(!controls.torch)}
+                aria-pressed={controls.torch}
               >
-                {devices.map((d, i) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || `Camera ${i + 1}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+                <Flashlight className="size-4" aria-hidden />
+                Light {controls.torch ? 'on' : 'off'}
+              </Button>
+            )}
+            {controls.brightness && (
+              <label className="flex items-center gap-2">
+                Camera brightness
+                <input
+                  type="range"
+                  min={controls.brightness.min}
+                  max={controls.brightness.max}
+                  step={controls.brightness.step}
+                  value={controls.brightness.value}
+                  onChange={(e) => setBrightness(Number(e.target.value))}
+                />
+              </label>
+            )}
+            {devices.length > 1 && (
+              <label className="flex items-center gap-2">
+                Camera:
+                <select
+                  className="bg-card rounded-md border px-2 py-1"
+                  value={deviceId ?? ''}
+                  onChange={(e) => startCamera(e.target.value)}
+                >
+                  {devices.map((d, i) => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.label || `Camera ${i + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
 
           <ul className="text-muted-foreground flex flex-wrap gap-x-5 gap-y-1 text-xs">
             <li className="flex items-center gap-1">
-              <Lightbulb className="size-3.5" aria-hidden /> Face a window or lamp; avoid light
-              behind you
+              <Lightbulb className="size-3.5" aria-hidden /> Face a window or lamp; in a dark room,
+              turn on Screen light
             </li>
             <li>Hold the cube 25–40 cm from the camera</li>
             <li>Hold it by the edges; fill the box</li>
@@ -293,29 +368,24 @@ export function ScanPage() {
 
         <aside className="bg-card h-fit space-y-5 rounded-xl border p-5">
           <ol className="flex gap-2" aria-label="Scan progress">
-            {SCAN_ORDER.map((s, i) => (
-              <li key={s.front}>
+            {faces.map((face, i) => (
+              <li key={i}>
                 <button
                   type="button"
                   onClick={() => retake(i)}
-                  disabled={!faces[i]}
-                  title={faces[i] ? `Retake the ${s.front} side` : `${capitalize(s.front)} side`}
-                  aria-label={
-                    faces[i]
-                      ? `Retake the ${s.front} side`
-                      : `${capitalize(s.front)} side, not scanned yet`
-                  }
+                  disabled={!face}
+                  title={face ? `Retake side ${i + 1}` : `Side ${i + 1}`}
+                  aria-label={face ? `Retake side ${i + 1}` : `Side ${i + 1}, not scanned yet`}
                   className={cn(
-                    'relative flex size-10 items-center justify-center overflow-hidden rounded-md border-2',
-                    i === step && !allDone ? 'border-primary' : 'border-transparent',
-                    faces[i] && 'hover:opacity-80',
+                    'bg-muted relative flex size-10 items-center justify-center overflow-hidden rounded-md border-2',
+                    i === slot && !allDone ? 'border-primary' : 'border-transparent',
+                    face && 'hover:opacity-80',
                   )}
-                  style={{ background: STICKER_FILL[s.front] }}
                 >
-                  {faces[i] ? (
+                  {face ? (
                     <>
                       <img
-                        src={faces[i]!.thumbnail}
+                        src={face.thumbnail}
                         alt=""
                         className="absolute inset-0 size-full object-cover"
                       />
@@ -324,7 +394,9 @@ export function ScanPage() {
                         aria-hidden
                       />
                     </>
-                  ) : null}
+                  ) : (
+                    <span className="text-muted-foreground text-xs">{i + 1}</span>
+                  )}
                 </button>
               </li>
             ))}
@@ -342,15 +414,18 @@ export function ScanPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <p className="text-muted-foreground text-xs">Step {step + 1} of 6</p>
+              <p className="text-muted-foreground text-xs">{count} of 6 sides scanned</p>
               <div className="flex gap-4 text-sm">
-                <Swatch color={current.front} label="Facing camera" />
-                <Swatch color={current.top} label="On top" />
+                <Swatch color={suggestion.front} label="Next, show" />
+                <Swatch color={suggestion.top} label="On top (if you can)" />
               </div>
-              <p className="text-base">{current.instruction}</p>
+              <p className="text-base">{suggestion.instruction}</p>
+              <p className="text-muted-foreground text-xs">
+                A different side or a different way up is fine too.
+              </p>
 
               <div aria-live="polite" className="min-h-10 space-y-1 text-sm">
-                {camStatus === 'live' && autoStatus && autoStatus !== 'wrong-side' && (
+                {camStatus === 'live' && autoStatus && (
                   <p
                     className={cn(
                       autoStatus === 'steadying' || autoStatus === 'capture'
@@ -364,7 +439,7 @@ export function ScanPage() {
                   </p>
                 )}
                 {!autoOn && camStatus === 'live' && live?.sample.tooDark && (
-                  <p className="text-amber-500">Too dark. Turn on a light or face a window.</p>
+                  <p className="text-amber-500">Too dark. Turn on a light or Screen light.</p>
                 )}
                 {!autoOn && camStatus === 'live' && live?.sample.glare && (
                   <p className="text-amber-500">Glare on the stickers. Tilt the cube a little.</p>
@@ -376,14 +451,14 @@ export function ScanPage() {
                   !live.sample.tooDark && (
                     <p className="text-muted-foreground">Fill the box with one side of the cube.</p>
                   )}
-                {wrongSide && (
-                  <p className="text-amber-500">
-                    The middle looks {centerGuess}. This step needs {current.front} facing the
-                    camera.
-                  </p>
-                )}
-                {!autoOn && camStatus === 'live' && ready && !wrongSide && (
+                {!autoOn && camStatus === 'live' && ready && (
                   <p className="text-green-500">Looks good. Hold still and capture.</p>
+                )}
+                {camStatus === 'live' && live?.sample.dim && !screenLight && (
+                  <p className="text-muted-foreground">
+                    It's a bit dark. Turn on <strong>Screen light</strong> or a lamp for steadier
+                    colors.
+                  </p>
                 )}
               </div>
 
@@ -400,14 +475,18 @@ export function ScanPage() {
               <Button
                 size="lg"
                 className="w-full"
-                onClick={capture}
+                onClick={() => capture()}
                 disabled={camStatus !== 'live'}
               >
                 <Camera className="size-4" aria-hidden />
                 {autoOn ? 'Capture now (Space)' : 'Capture (Space)'}
               </Button>
-              {step > 0 && (
-                <Button variant="ghost" size="sm" onClick={() => retake(step - 1)}>
+              {count > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => retake(faces.findLastIndex((f) => f !== null))}
+                >
                   <RotateCcw className="size-4" aria-hidden />
                   Redo the last side
                 </Button>

@@ -19,6 +19,10 @@ export type StickerSample = {
   lab: Lab
   /** 0 (very mixed colors) to 1 (one even color): is there really a sticker here? */
   evenness: number
+  /** Average difference of the pixels from their average color (camera grain + mixing). */
+  spread: number
+  /** Biggest color difference between the area's left/right or top/bottom halves. */
+  halfDiff: number
   /** Share of pixels that are blown-out white (glare). */
   glare: number
 }
@@ -30,7 +34,10 @@ export type FaceSample = {
   /** True when the 9 areas each look like one even color. */
   looksLikeFace: boolean
   glare: boolean
+  /** Nearly black: nothing can be read. */
   tooDark: boolean
+  /** Readable, but more light would help. */
+  dim: boolean
 }
 
 /** Box of the given share of the shorter side, centered in the image. */
@@ -52,21 +59,53 @@ function sampleCell(img: Pixels, x0: number, y0: number, cell: number): StickerS
 
   const pixels: RGB[] = []
   let glare = 0
+  // Sums for the left/right and top/bottom halves (glare left out).
+  const half = { l: [0, 0, 0, 0], r: [0, 0, 0, 0], t: [0, 0, 0, 0], b: [0, 0, 0, 0] }
+  const midX = (xs + xe) / 2
+  const midY = (ys + ye) / 2
+  const addTo = (h: number[], p: RGB) => {
+    h[0]! += p[0]
+    h[1]! += p[1]
+    h[2]! += p[2]
+    h[3]!++
+  }
   for (let y = ys; y < ye; y += step) {
     for (let x = xs; x < xe; x += step) {
       const i = (y * img.width + x) * 4
       const p: RGB = [img.data[i]!, img.data[i + 1]!, img.data[i + 2]!]
       if (p[0] >= GLARE_LEVEL && p[1] >= GLARE_LEVEL && p[2] >= GLARE_LEVEL) glare++
+      else {
+        addTo(x < midX ? half.l : half.r, p)
+        addTo(y < midY ? half.t : half.b, p)
+      }
       pixels.push(p)
     }
   }
+  const diff = (a: number[], b: number[]) =>
+    a[3]! && b[3]!
+      ? [0, 1, 2].reduce((s, k) => s + Math.abs(a[k]! / a[3]! - b[k]! / b[3]!), 0) / 3
+      : 0
+  const halfDiff = Math.max(diff(half.l, half.r), diff(half.t, half.b))
   if (pixels.length === 0) {
-    return { rgb: [0, 0, 0], lab: rgbToLab([0, 0, 0]), evenness: 0, glare: 0 }
+    return {
+      rgb: [0, 0, 0],
+      lab: rgbToLab([0, 0, 0]),
+      evenness: 0,
+      spread: 99,
+      halfDiff: 99,
+      glare: 0,
+    }
   }
 
   // Drop the brightest and darkest 15% (glare spots, shadows, dirt), then average.
   const bright = (p: RGB) => p[0] + p[1] + p[2]
-  const sorted = [...pixels].sort((a, b) => bright(a) - bright(b))
+  // Glare pixels say nothing about the sticker's color; leave them out (unless that's all there is).
+  const usable = pixels.filter(
+    (p) => !(p[0] >= GLARE_LEVEL && p[1] >= GLARE_LEVEL && p[2] >= GLARE_LEVEL),
+  )
+  const sorted = (usable.length >= pixels.length / 3 ? usable : pixels).sort(
+    (a, b) => bright(a) - bright(b),
+  )
   const cut = Math.floor(sorted.length * 0.15)
   const kept = sorted.slice(cut, sorted.length - cut || undefined)
   const avg = [0, 1, 2].map(
@@ -83,7 +122,7 @@ function sampleCell(img: Pixels, x0: number, y0: number, cell: number): StickerS
     3
   const evenness = Math.max(0, 1 - spread / 40)
 
-  return { rgb: avg, lab: rgbToLab(avg), evenness, glare: glare / pixels.length }
+  return { rgb: avg, lab: rgbToLab(avg), evenness, spread, halfDiff, glare: glare / pixels.length }
 }
 
 /** Samples the 3x3 grid of stickers inside `box`, row by row, as seen in the image. */
@@ -97,7 +136,20 @@ export function sampleFace(img: Pixels, box: Box): FaceSample {
   const brightness =
     stickers.reduce((s, x) => s + (x.rgb[0] + x.rgb[1] + x.rgb[2]) / 3, 0) / stickers.length
   const glare = stickers.some((s) => s.glare > 0.2)
-  const tooDark = brightness < 45
-  const looksLikeFace = !tooDark && stickers.every((s) => s.evenness > 0.55)
-  return { stickers, brightness, looksLikeFace, glare, tooDark }
+  // Webcams brighten dark scenes themselves, so even a dim picture can usually
+  // be read. Only a nearly black one can't.
+  const tooDark = brightness < 18
+  const dim = !tooDark && brightness < 60
+  // Each area must be one even color. "Even" is judged against this picture's
+  // own grain: in low light every area is grainy, but a cell that spans two
+  // stickers (the cube moving, or not in the box) is much less even than the rest.
+  const spreads = stickers.map((s) => s.spread).sort((a, b) => a - b)
+  const typical = spreads[4]!
+  // Averaging half an area cancels most grain, so a clear difference between
+  // its halves means it spans two stickers.
+  const looksLikeFace =
+    !tooDark &&
+    typical < 30 &&
+    stickers.every((s) => s.spread < Math.max(18, typical * 1.8) && s.halfDiff < 9)
+  return { stickers, brightness, looksLikeFace, glare, tooDark, dim }
 }

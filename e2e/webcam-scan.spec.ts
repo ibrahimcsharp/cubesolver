@@ -49,7 +49,7 @@ test('webcam scan captures all 6 sides hands-free', async ({ page }) => {
     await page.waitForTimeout(400)
     await show(color)
     // The side's progress button turns into "Retake" once it has been captured.
-    await expect(page.getByRole('button', { name: /^Retake the/ })).toHaveCount(i + 1, {
+    await expect(page.getByRole('button', { name: /^Retake side/ })).toHaveCount(i + 1, {
       timeout: 8000,
     })
   }
