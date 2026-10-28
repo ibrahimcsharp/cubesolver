@@ -11,6 +11,10 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    // The 3D cube chunk (three.js, ~250 KB gzipped) is loaded only when shown.
+    chunkSizeWarningLimit: 1000,
+  },
   worker: {
     // Vision code will run in Web Workers (Phase 3).
     format: 'es',

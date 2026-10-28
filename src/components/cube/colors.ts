@@ -34,3 +34,13 @@ export const PICKER_ORDER: readonly StickerColor[] = [
 export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 export { COLORS }
+
+/** The same sticker colors as hex, for the 3D cube (WebGL can't read CSS variables). */
+export const STICKER_HEX: Record<StickerColor, string> = {
+  white: '#f5f5f5',
+  yellow: '#ffd500',
+  green: '#009b48',
+  blue: '#0046ad',
+  red: '#b71234',
+  orange: '#ff5800',
+}
